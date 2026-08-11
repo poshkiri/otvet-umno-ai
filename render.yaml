@@ -7,7 +7,6 @@ services:
     autoDeployTrigger: commit
     buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm start
-    maxShutdownDelaySeconds: 30
     disk:
       name: bot-data
       mountPath: /opt/render/project/src/data
