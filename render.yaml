@@ -1,0 +1,29 @@
+services:
+  - type: worker
+    name: otvet-umno-ai
+    runtime: node
+    region: frankfurt
+    plan: starter
+    autoDeployTrigger: commit
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
+    startCommand: npm start
+    maxShutdownDelaySeconds: 30
+    disk:
+      name: bot-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.6-luna
+      - key: OPENAI_TRANSCRIBE_MODEL
+        value: gpt-4o-mini-transcribe
+      - key: FREE_REQUEST_LIMIT
+        value: "5"
+      - key: DATABASE_PATH
+        value: /opt/render/project/src/data/bot.db
+      - key: ADMIN_TELEGRAM_ID
+        sync: false

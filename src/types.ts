@@ -1,0 +1,91 @@
+export const flowIds = [
+  "analyze",
+  "compose",
+  "review",
+  "client",
+  "hr",
+  "marketplace",
+  "complaint",
+] as const;
+
+export type FlowId = (typeof flowIds)[number];
+
+export const categoryIds = [
+  "auto",
+  "business",
+  "sales",
+  "work",
+  "marketplace",
+  "personal",
+] as const;
+
+export type CategoryId = (typeof categoryIds)[number];
+
+export const refinementIds = [
+  "softer",
+  "confident",
+  "shorter",
+  "neutral",
+  "boundaries",
+  "premium",
+  "more",
+  "english",
+] as const;
+
+export type RefinementId = (typeof refinementIds)[number];
+
+export interface BotSession {
+  flow?: FlowId;
+  category?: CategoryId;
+  awaitingInput: boolean;
+  lastSource?: string;
+  lastResult?: string;
+  visualResponseId?: string;
+}
+
+export interface UserAccess {
+  freeUsed: number;
+  freeLimit: number;
+  credits: number;
+  plan: string;
+  allowed: boolean;
+}
+
+export interface GenerationRecord {
+  id: number;
+  flow: FlowId;
+  category: CategoryId;
+  source: string;
+  result: string;
+  createdAt: string;
+}
+
+export const FLOW_LABELS: Record<FlowId, string> = {
+  analyze: "Разбор переписки",
+  compose: "Ответ с нуля",
+  review: "Проверка моего ответа",
+  client: "Ответ клиенту",
+  hr: "Ответ HR",
+  marketplace: "Ответ покупателю",
+  complaint: "Ответ на претензию",
+};
+
+export const CATEGORY_LABELS: Record<CategoryId, string> = {
+  auto: "Определить автоматически",
+  business: "Деловая переписка",
+  sales: "Продажи и клиенты",
+  work: "Работа и HR",
+  marketplace: "Маркетплейсы и объявления",
+  personal: "Личная переписка",
+};
+
+export const REFINEMENT_LABELS: Record<RefinementId, string> = {
+  softer: "мягче",
+  confident: "увереннее",
+  shorter: "короче",
+  neutral: "без эмоций",
+  boundaries: "с границами",
+  premium: "дороже и статуснее",
+  more: "ещё 5 вариантов",
+  english: "на английском",
+};
