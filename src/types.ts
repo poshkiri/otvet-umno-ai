@@ -60,6 +60,17 @@ export interface GenerationRecord {
   createdAt: string;
 }
 
+export interface PaymentRecord {
+  chargeId: string;
+  packageId: string;
+  credits: number;
+  remainingCredits: number;
+  stars: number;
+  status: "paid" | "refunded";
+  createdAt: string;
+  refundedAt?: string | undefined;
+}
+
 export const FLOW_LABELS: Record<FlowId, string> = {
   analyze: "Разбор переписки",
   compose: "Ответ с нуля",

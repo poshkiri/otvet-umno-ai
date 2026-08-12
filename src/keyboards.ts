@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { CategoryId, FlowId } from "./types.js";
+import { CREDIT_PACKAGES } from "./payments.js";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
@@ -51,6 +52,15 @@ export function profileMenu(): InlineKeyboard {
     .text("💳 Тариф", "menu:tariffs")
     .text("⚡ Лимит", "menu:balance").row()
     .text("← В меню", "menu:main");
+}
+
+export function tariffsMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(`Старт · ${CREDIT_PACKAGES.start.stars} ⭐`, "buy:start").row()
+    .text(`Плюс · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
+    .text(`Про · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
+    .text("🧾 Мои покупки", "menu:payments").row()
+    .text("← Назад", "menu:profile");
 }
 
 const QUICK_CATEGORIES: Partial<Record<FlowId, CategoryId>> = {

@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile, session, type SessionFlavor } from "grammy";
+import { Bot, Context, InlineKeyboard, InputFile, session, type SessionFlavor } from "grammy";
 import type { AppConfig } from "./config.js";
 import { AiService } from "./ai.js";
 import { BotDatabase } from "./database.js";
@@ -10,7 +10,14 @@ import {
   refinementsMenu,
   resultMenu,
   visualResultMenu,
+  tariffsMenu,
 } from "./keyboards.js";
+import {
+  CREDIT_PACKAGES,
+  createPaymentPayload,
+  isCreditPackageId,
+  parsePaymentPayload,
+} from "./payments.js";
 import {
   CATEGORY_LABELS,
   FLOW_LABELS,
@@ -112,6 +119,13 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     await ctx.reply(balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan));
   });
 
+  bot.command("paysupport", async (ctx) => {
+    await ctx.reply(
+      "Поддержка по оплате\n\nЕсли пакет не начислился или нужен возврат, отправь сюда ID платежа и опиши проблему. ID находится в разделе «Мои покупки». Владелец бота проверит операцию.",
+      { reply_markup: new InlineKeyboard().text("🧾 Мои покупки", "menu:payments") },
+    );
+  });
+
   bot.command("myid", async (ctx) => {
     if (!ctx.from) return;
     const role = ctx.from.id === config.ADMIN_TELEGRAM_ID ? "владелец · безлимит" : "пользователь";
@@ -132,10 +146,38 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     await ctx.reply(`Готово: пользователю ${targetId} начислено ${amount} запросов.`);
   });
 
+  bot.command("refund", async (ctx) => {
+    if (!ctx.from || ctx.from.id !== config.ADMIN_TELEGRAM_ID) return;
+    const [, chargeId] = ctx.message?.text?.trim().split(/\s+/) ?? [];
+    if (!chargeId) {
+      await ctx.reply("Формат: /refund ID_ПЛАТЕЖА");
+      return;
+    }
+    const payment = db.getPayment(chargeId);
+    if (!payment) {
+      await ctx.reply("Платёж с таким ID не найден.");
+      return;
+    }
+    if (payment.status === "refunded") {
+      await ctx.reply("Этот платёж уже возвращён.");
+      return;
+    }
+    try {
+      await ctx.api.refundStarPayment(payment.telegramId, chargeId);
+      db.markPaymentRefunded(chargeId);
+      await ctx.reply(`Возврат ${payment.stars} Stars выполнен пользователю ${payment.telegramId}.`);
+    } catch (error) {
+      console.error("Refund error", error);
+      await ctx.reply("Telegram не выполнил возврат. Проверь ID платежа и баланс бота.");
+    }
+  });
+
   bot.command("stats", async (ctx) => {
     if (!ctx.from || ctx.from.id !== config.ADMIN_TELEGRAM_ID) return;
     const stats = db.stats();
-    await ctx.reply(`Пользователей: ${stats.users}\nГенераций: ${stats.generations}\nШаблонов: ${stats.favorites}`);
+    await ctx.reply(
+      `Пользователей: ${stats.users}\nГенераций: ${stats.generations}\nШаблонов: ${stats.favorites}\nПокупок: ${stats.payments}\nStars получено: ${stats.stars}`,
+    );
   });
 
   bot.callbackQuery("menu:main", async (ctx) => {
@@ -148,8 +190,107 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
     await ctx.editMessageText(
-      `💳 Тарифы\n\n20 ответов — 99 ₽\n100 ответов — 299 ₽\nБезлимит на месяц — 599 ₽\nДля команд — от 1490 ₽/мес\n\n${balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan)}\n\nДля оплаты пока напиши владельцу бота.`,
-      { reply_markup: new (await import("grammy")).InlineKeyboard().text("← В меню", "menu:main") },
+      [
+        "⭐ Пакеты запросов",
+        "",
+        `Старт — ${CREDIT_PACKAGES.start.credits} запросов за ${CREDIT_PACKAGES.start.stars} Stars`,
+        `Плюс — ${CREDIT_PACKAGES.plus.credits} запросов за ${CREDIT_PACKAGES.plus.stars} Stars`,
+        `Про — ${CREDIT_PACKAGES.pro.credits} запросов за ${CREDIT_PACKAGES.pro.stars} Stars`,
+        "",
+        balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        "",
+        "Запросы не сгорают. Оплата проходит внутри Telegram.",
+      ].join("\n"),
+      { reply_markup: tariffsMenu() },
+    );
+  });
+
+  bot.callbackQuery(/^buy:(.+)$/, async (ctx) => {
+    const packageId = ctx.match[1];
+    if (!packageId || !isCreditPackageId(packageId)) {
+      await ctx.answerCallbackQuery("Неизвестный пакет");
+      return;
+    }
+    const selected = CREDIT_PACKAGES[packageId];
+    await ctx.answerCallbackQuery();
+    await ctx.replyWithInvoice(
+      `Пакет «${selected.title}»`,
+      `${selected.credits} запросов к ОтветьУмно AI. Запросы не сгорают.`,
+      createPaymentPayload(packageId, ctx.from.id),
+      "XTR",
+      [{ label: `${selected.credits} запросов`, amount: selected.stars }],
+      { reply_markup: new InlineKeyboard().pay(`Оплатить ${selected.stars} ⭐`) },
+    );
+  });
+
+  bot.callbackQuery("menu:payments", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const payments = db.recentPayments(ctx.from.id, 10);
+    const text = payments.length
+      ? `🧾 Мои покупки\n\n${payments.map((payment, index) => [
+        `${index + 1}. ${payment.credits} запросов · ${payment.stars} ⭐`,
+        payment.status === "paid" ? "Статус: оплачено" : "Статус: возврат выполнен",
+        `ID: ${payment.chargeId}`,
+        `Дата: ${formatPaymentDate(payment.createdAt)}`,
+      ].join("\n")).join("\n\n")}`
+      : "Покупок пока нет.";
+    await ctx.editMessageText(text, {
+      reply_markup: new InlineKeyboard().text("← К тарифам", "menu:tariffs"),
+    });
+  });
+
+  bot.on("pre_checkout_query", async (ctx) => {
+    const query = ctx.preCheckoutQuery;
+    const parsed = parsePaymentPayload(query.invoice_payload);
+    const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+    const valid = Boolean(
+      parsed
+      && selected
+      && parsed.telegramId === query.from.id
+      && query.currency === "XTR"
+      && query.total_amount === selected.stars,
+    );
+    await ctx.answerPreCheckoutQuery(
+      valid,
+      valid ? undefined : { error_message: "Счёт устарел или повреждён. Вернись в тарифы и создай новый." },
+    );
+  });
+
+  bot.on("message:successful_payment", async (ctx) => {
+    const payment = ctx.message.successful_payment;
+    const parsed = parsePaymentPayload(payment.invoice_payload);
+    const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+    if (
+      !parsed
+      || !selected
+      || parsed.telegramId !== ctx.from.id
+      || payment.currency !== "XTR"
+      || payment.total_amount !== selected.stars
+    ) {
+      console.error("Invalid successful payment", {
+        telegramId: ctx.from.id,
+        payload: payment.invoice_payload,
+        amount: payment.total_amount,
+      });
+      await ctx.reply("Платёж получен, но пакет не удалось определить. Напиши /paysupport — мы проверим вручную.");
+      return;
+    }
+    const credited = db.recordPayment(
+      ctx.from.id,
+      parsed.packageId,
+      selected.credits,
+      selected.stars,
+      payment.invoice_payload,
+      payment.telegram_payment_charge_id,
+    );
+    if (!credited) {
+      await ctx.reply("Этот платёж уже был обработан. Повторно запросы не списывались и не начислялись.");
+      return;
+    }
+    const access = db.getAccess(ctx.from.id);
+    await ctx.reply(
+      `Оплата прошла ✅\n\nНачислено: ${selected.credits} запросов\nТеперь доступно: ${access.credits} купленных запросов\n\nСпасибо! Можешь сразу отправлять фото или скриншот.`,
+      { reply_markup: mainMenu() },
     );
   });
 
@@ -478,4 +619,15 @@ async function handleError(ctx: BotContext, error: unknown): Promise<void> {
 function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
   if (plan === "pro") return "Тариф: безлимит";
   return `Бесплатно осталось: ${Math.max(0, freeLimit - freeUsed)}\nКупленных запросов: ${credits}`;
+}
+
+function formatPaymentDate(value: string): string {
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "Asia/Irkutsk",
+  }).format(date);
 }

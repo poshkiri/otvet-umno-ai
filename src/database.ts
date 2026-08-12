@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CategoryId, FlowId, GenerationRecord, UserAccess } from "./types.js";
+import type { CategoryId, FlowId, GenerationRecord, PaymentRecord, UserAccess } from "./types.js";
 
 export class BotDatabase {
   private readonly db: DatabaseSync;
@@ -47,8 +47,25 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS payments (
+        telegram_payment_charge_id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        package_id TEXT NOT NULL,
+        credits INTEGER NOT NULL,
+        remaining_credits INTEGER NOT NULL,
+        stars INTEGER NOT NULL,
+        invoice_payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'paid' CHECK (status IN ('paid', 'refunded')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        refunded_at TEXT,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS payments_user_date
+      ON payments(telegram_id, created_at DESC);
     `);
   }
 
@@ -93,6 +110,14 @@ export class BotDatabase {
         this.db.prepare(
           "UPDATE users SET credits = credits - 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
         ).run(telegramId);
+        this.db.prepare(`
+          UPDATE payments SET remaining_credits = remaining_credits - 1
+          WHERE telegram_payment_charge_id = (
+            SELECT telegram_payment_charge_id FROM payments
+            WHERE telegram_id = ? AND status = 'paid' AND remaining_credits > 0
+            ORDER BY created_at, rowid LIMIT 1
+          )
+        `).run(telegramId);
       }
     }
     return this.getAccess(telegramId);
@@ -102,6 +127,119 @@ export class BotDatabase {
     this.db.prepare(
       "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
     ).run(amount, telegramId);
+  }
+
+  recordPayment(
+    telegramId: number,
+    packageId: string,
+    credits: number,
+    stars: number,
+    invoicePayload: string,
+    chargeId: string,
+  ): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.db.prepare(`
+        INSERT OR IGNORE INTO payments (
+          telegram_payment_charge_id, telegram_id, package_id, credits, remaining_credits,
+          stars, invoice_payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(chargeId, telegramId, packageId, credits, credits, stars, invoicePayload);
+      if (result.changes === 0) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(
+        "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+      ).run(credits, telegramId);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recentPayments(telegramId: number, limit = 10): PaymentRecord[] {
+    const rows = this.db.prepare(`
+      SELECT telegram_payment_charge_id, package_id, credits, remaining_credits, stars,
+             status, created_at, refunded_at
+      FROM payments WHERE telegram_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(telegramId, limit) as Array<{
+      telegram_payment_charge_id: string;
+      package_id: string;
+      credits: number;
+      remaining_credits: number;
+      stars: number;
+      status: "paid" | "refunded";
+      created_at: string;
+      refunded_at: string | null;
+    }>;
+    return rows.map((row) => ({
+      chargeId: row.telegram_payment_charge_id,
+      packageId: row.package_id,
+      credits: row.credits,
+      remainingCredits: row.remaining_credits,
+      stars: row.stars,
+      status: row.status,
+      createdAt: row.created_at,
+      refundedAt: row.refunded_at ?? undefined,
+    }));
+  }
+
+  getPayment(chargeId: string): (PaymentRecord & { telegramId: number }) | undefined {
+    const row = this.db.prepare(`
+      SELECT telegram_payment_charge_id, telegram_id, package_id, credits, remaining_credits, stars,
+             status, created_at, refunded_at
+      FROM payments WHERE telegram_payment_charge_id = ?
+    `).get(chargeId) as {
+      telegram_payment_charge_id: string;
+      telegram_id: number;
+      package_id: string;
+      credits: number;
+      remaining_credits: number;
+      stars: number;
+      status: "paid" | "refunded";
+      created_at: string;
+      refunded_at: string | null;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      chargeId: row.telegram_payment_charge_id,
+      telegramId: row.telegram_id,
+      packageId: row.package_id,
+      credits: row.credits,
+      remainingCredits: row.remaining_credits,
+      stars: row.stars,
+      status: row.status,
+      createdAt: row.created_at,
+      refundedAt: row.refunded_at ?? undefined,
+    };
+  }
+
+  markPaymentRefunded(chargeId: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const payment = this.getPayment(chargeId);
+      if (!payment || payment.status !== "paid") {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        UPDATE payments SET status = 'refunded', remaining_credits = 0,
+                            refunded_at = CURRENT_TIMESTAMP
+        WHERE telegram_payment_charge_id = ? AND status = 'paid'
+      `).run(chargeId);
+      this.db.prepare(`
+        UPDATE users SET credits = MAX(0, credits - ?), updated_at = CURRENT_TIMESTAMP
+        WHERE telegram_id = ?
+      `).run(payment.remainingCredits, payment.telegramId);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   setPlan(telegramId: number, plan: "free" | "pro"): void {
@@ -161,12 +299,18 @@ export class BotDatabase {
     `).all(telegramId, limit) as Array<{ title: string; content: string }>;
   }
 
-  stats(): { users: number; generations: number; favorites: number } {
+  stats(): { users: number; generations: number; favorites: number; payments: number; stars: number } {
     const count = (table: string): number => {
       const row = this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
       return row.count;
     };
-    return { users: count("users"), generations: count("generations"), favorites: count("favorites") };
+    const stars = this.db.prepare(
+      "SELECT COALESCE(SUM(stars), 0) AS total FROM payments WHERE status = 'paid'",
+    ).get() as { total: number };
+    return {
+      users: count("users"), generations: count("generations"), favorites: count("favorites"),
+      payments: count("payments"), stars: stars.total,
+    };
   }
 
   close(): void {

@@ -23,6 +23,7 @@ await bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "menu", description: "Открыть главное меню" },
   { command: "balance", description: "Проверить лимиты" },
+  { command: "paysupport", description: "Поддержка по оплате" },
   { command: "myid", description: "Показать мой Telegram ID" },
   { command: "help", description: "Как пользоваться" },
 ]);
