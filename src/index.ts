@@ -29,8 +29,14 @@ const { bot, drainBackgroundTasks } = createBot(config, database, ai, analytics)
 
 console.log("Пойми AI запускается…");
 await bot.init();
-await bot.api.setMyName("Пойми AI");
-await bot.api.setMyCommands([
+const configureProfile = async (label: string, update: () => Promise<unknown>): Promise<void> => {
+  try {
+    await update();
+  } catch (error) {
+    console.warn(`Не удалось обновить ${label}; бот продолжит работу`, error);
+  }
+};
+await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "menu", description: "Открыть главное меню" },
   { command: "image", description: "Создать AI-картинку" },
@@ -38,11 +44,11 @@ await bot.api.setMyCommands([
   { command: "paysupport", description: "Поддержка по оплате" },
   { command: "myid", description: "Показать мой Telegram ID" },
   { command: "help", description: "Как пользоваться" },
-]);
-await bot.api.setMyShortDescription(
+]));
+await configureProfile("короткое описание", () => bot.api.setMyShortDescription(
   "✨ Фото, голос, учёба, тексты и изображения. Канал: @PoymiAI_news",
-);
-await bot.api.setMyDescription(
+));
+await configureProfile("полное описание", () => bot.api.setMyDescription(
   [
     "✨ Пойми AI — помощник на каждый день",
     "",
@@ -54,7 +60,7 @@ await bot.api.setMyDescription(
     "",
     "Канал: @PoymiAI_news",
   ].join("\n"),
-);
+));
 try {
   const result = await reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS);
   if (result.credited || result.refunded) {
