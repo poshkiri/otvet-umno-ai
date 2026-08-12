@@ -58,6 +58,7 @@ export function profileMenu(): InlineKeyboard {
 export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
     .text("⭐ Оформить Plus", "subscribe:plus").row()
+    .text("❓ Как купить Stars", "stars:help").row()
     .text(`Старт · ${CREDIT_PACKAGES.start.stars} ⭐`, "buy:start").row()
     .text(`Плюс · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
     .text(`Про · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()

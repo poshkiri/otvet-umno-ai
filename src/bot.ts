@@ -518,6 +518,29 @@ export function createBot(
     );
   });
 
+  bot.callbackQuery("stars:help", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    track(ctx.from.id, "stars_help_viewed");
+    await editOrReplyMenu(
+      ctx,
+      [
+        "⭐ Как купить Telegram Stars",
+        "",
+        "Без App Store:",
+        "1. Открой Telegram Desktop, Telegram Web или прямую Android-версию.",
+        "2. Нажми кнопку «Открыть @PremiumBot» ниже.",
+        "3. Выбери Telegram Stars и нужное количество.",
+        "4. После оплаты вернись в ОтветьУмно AI.",
+        "5. Открой «Plus и запросы» и нажми «Оформить Plus».",
+        "",
+        "Используй только официальный бот Telegram — @PremiumBot.",
+      ].join("\n"),
+      new InlineKeyboard()
+        .url("⭐ Открыть @PremiumBot", "https://t.me/PremiumBot").row()
+        .text("← К тарифам", "menu:tariffs"),
+    );
+  });
+
   bot.callbackQuery(/^subscription:(cancel|resume)$/, async (ctx) => {
     const subscription = db.getSubscriptionAccess(ctx.from.id);
     if (!subscription.active || !subscription.latestChargeId) {
@@ -1329,6 +1352,7 @@ function subscriptionMenu(autoRenew: boolean): InlineKeyboard {
       autoRenew ? "Отключить автопродление" : "Включить автопродление",
       autoRenew ? "subscription:cancel" : "subscription:resume",
     ).row()
+    .text("❓ Как купить Stars", "stars:help").row()
     .text("➕ Купить разовые запросы", "buy:start").row()
     .text("🧾 Мои покупки", "menu:payments").row()
     .text("← В меню", "menu:main");
