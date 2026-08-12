@@ -6,6 +6,7 @@ import { BotDatabase } from "./database.js";
 import {
   categoryMenu,
   mainMenu,
+  imageResultMenu,
   profileMenu,
   quickCategory,
   refinementsMenu,
@@ -15,9 +16,12 @@ import {
 } from "./keyboards.js";
 import {
   CREDIT_PACKAGES,
+  PLUS_SUBSCRIPTION_PERIOD_SECONDS,
   createPaymentPayload,
+  createSubscriptionPayload,
   isCreditPackageId,
   parsePaymentPayload,
+  parseSubscriptionPayload,
 } from "./payments.js";
 import {
   CATEGORY_LABELS,
@@ -28,6 +32,7 @@ import {
   type BotSession,
   type CategoryId,
   type FlowId,
+  type ImageAllowance,
   type RefinementId,
 } from "./types.js";
 import { cleanTelegramText, displayName, splitLongMessage } from "./utils.js";
@@ -105,6 +110,12 @@ export function createBot(
   const pendingAlbums = new Map<string, PendingAlbum>();
   const backgroundTasks = new Set<Promise<void>>();
   const resourceLimiter = new Semaphore(2);
+  const imageLimits = {
+    plus: config.PLUS_IMAGE_LIMIT,
+    pro: config.PRO_IMAGE_LIMIT,
+    global: config.GLOBAL_IMAGE_LIMIT,
+    windowSeconds: config.IMAGE_WINDOW_HOURS * 60 * 60,
+  };
   let lastAdminErrorAt = 0;
 
   const track = (
@@ -141,19 +152,27 @@ export function createBot(
     if (ctx.preCheckoutQuery) {
       const query = ctx.preCheckoutQuery;
       const parsed = parsePaymentPayload(query.invoice_payload);
+      const subscription = parseSubscriptionPayload(query.invoice_payload);
       const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
-      const valid = Boolean(
+      const validCredits = Boolean(
         parsed
         && selected
         && parsed.telegramId === query.from.id
         && query.currency === "XTR"
         && query.total_amount === selected.stars,
       );
+      const validSubscription = Boolean(
+        subscription
+        && subscription.telegramId === query.from.id
+        && query.currency === "XTR"
+        && query.total_amount === config.PLUS_SUBSCRIPTION_STARS,
+      );
+      const valid = validCredits || validSubscription;
       if (valid) {
         db.ensureUser(query.from.id, query.from.username, query.from.first_name);
-        track(query.from.id, "checkout_confirmed", selected?.id, {
-          package_id: selected?.id,
-          stars: selected?.stars,
+        track(query.from.id, "checkout_confirmed", subscription ? "plus_subscription" : selected?.id, {
+          package_id: subscription ? "plus_subscription" : selected?.id,
+          stars: subscription ? config.PLUS_SUBSCRIPTION_STARS : selected?.stars,
         });
       }
       await ctx.answerPreCheckoutQuery(
@@ -171,6 +190,43 @@ export function createBot(
       return;
     }
     db.ensureUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const subscription = parseSubscriptionPayload(payment.invoice_payload);
+    if (
+      subscription
+      && subscription.telegramId === ctx.from.id
+      && payment.currency === "XTR"
+      && payment.total_amount === config.PLUS_SUBSCRIPTION_STARS
+    ) {
+      const periodEnd = payment.subscription_expiration_date
+        ?? Math.floor(Date.now() / 1000) + PLUS_SUBSCRIPTION_PERIOD_SECONDS;
+      const activated = db.recordSubscriptionPayment(
+        ctx.from.id,
+        config.PLUS_SUBSCRIPTION_STARS,
+        payment.invoice_payload,
+        payment.telegram_payment_charge_id,
+        periodEnd,
+        payment.is_first_recurring === true,
+      );
+      if (!activated) {
+        await ctx.reply("Этот платёж уже обработан. Подписка Plus остаётся активной.");
+        return;
+      }
+      track(ctx.from.id, "subscription_started", "plus", {
+        stars: config.PLUS_SUBSCRIPTION_STARS,
+        period_end: periodEnd,
+      });
+      await ctx.reply(
+        `Plus активирован ✅\n\nТеперь доступно ${config.PLUS_IMAGE_LIMIT} картинок каждые ${config.IMAGE_WINDOW_HOURS} ч. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+        { reply_markup: mainMenu() },
+      );
+      if (config.ADMIN_TELEGRAM_ID) {
+        void ctx.api.sendMessage(
+          config.ADMIN_TELEGRAM_ID,
+          `💰 Новая подписка Plus\nПолучено: ${config.PLUS_SUBSCRIPTION_STARS} Stars\nПользователь: ${ctx.from.id}`,
+        ).catch((error) => console.error("Subscription notification failed", error));
+      }
+      return;
+    }
     const parsed = parsePaymentPayload(payment.invoice_payload);
     const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
     if (
@@ -237,7 +293,10 @@ export function createBot(
       if (db.claimAction(ctx.from.id, "analytics-active", 60 * 60)) {
         db.recordEvent(ctx.from.id, "user_active");
       }
-      if (ctx.from.id === config.ADMIN_TELEGRAM_ID) db.setPlan(ctx.from.id, "pro");
+      if (
+        ctx.from.id === config.ADMIN_TELEGRAM_ID
+        || config.UNLIMITED_TELEGRAM_IDS.includes(ctx.from.id)
+      ) db.setPlan(ctx.from.id, "pro");
     }
     await next();
   });
@@ -264,10 +323,12 @@ export function createBot(
         "",
         "Товар • этикетка • инструкция",
         "Скриншот • документ • учебная задача",
+        "Голосовой вопрос • создание картинок",
         "",
         "Нажми значок камеры или скрепки возле поля сообщения.",
         `На старте доступно ${config.FREE_REQUEST_LIMIT} бесплатных запросов.`,
       ].join("\n"),
+      reply_markup: mainMenu(),
     });
   });
 
@@ -279,9 +340,16 @@ export function createBot(
     );
   });
 
+  bot.command("image", async (ctx) => {
+    ctx.session.awaitingImagePrompt = true;
+    await ctx.reply("Опиши картинку, которую хочешь получить. Например: «Космический Иркутск ночью, реалистичное фото».", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
+  });
+
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      "Просто отправь фотографию или скриншот — бот сам определит содержимое и объяснит его. Для работы с перепиской и текстом используй /menu.",
+      "Отправь фото, скриншот, текст или голосовое — я сам пойму задачу. Чтобы нарисовать картинку, напиши, например: «Нарисуй уютное кафе у озера», или открой /menu.",
       { reply_markup: mainMenu() },
     );
   });
@@ -301,7 +369,10 @@ export function createBot(
 
   bot.command("myid", async (ctx) => {
     if (!ctx.from) return;
-    const role = ctx.from.id === config.ADMIN_TELEGRAM_ID ? "владелец · безлимит" : "пользователь";
+    const role = ctx.from.id === config.ADMIN_TELEGRAM_ID
+      || config.UNLIMITED_TELEGRAM_IDS.includes(ctx.from.id)
+      ? "команда · расширенный доступ"
+      : "пользователь";
     await ctx.reply(`Твой Telegram ID: ${ctx.from.id}\nСтатус: ${role}`);
   });
 
@@ -327,22 +398,25 @@ export function createBot(
       return;
     }
     const payment = db.getPayment(chargeId);
-    if (!payment) {
+    const subscriptionPayment = db.getSubscriptionPayment(chargeId);
+    if (!payment && !subscriptionPayment) {
       await ctx.reply("Платёж с таким ID не найден.");
       return;
     }
-    if (payment.status === "refunded") {
+    const target = payment ?? subscriptionPayment!;
+    if (target.status === "refunded") {
       await ctx.reply("Этот платёж уже возвращён.");
       return;
     }
     try {
-      await ctx.api.refundStarPayment(payment.telegramId, chargeId);
-      db.markPaymentRefunded(chargeId);
-      track(payment.telegramId, "payment_refunded", payment.packageId, {
-        package_id: payment.packageId,
-        stars: payment.stars,
+      await ctx.api.refundStarPayment(target.telegramId, chargeId);
+      if (payment) db.markPaymentRefunded(chargeId);
+      else db.markSubscriptionPaymentRefunded(chargeId);
+      track(target.telegramId, "payment_refunded", payment?.packageId ?? "plus_subscription", {
+        package_id: payment?.packageId ?? "plus_subscription",
+        stars: target.stars,
       });
-      await ctx.reply(`Возврат ${payment.stars} Stars выполнен пользователю ${payment.telegramId}.`);
+      await ctx.reply(`Возврат ${target.stars} Stars выполнен пользователю ${target.telegramId}.`);
     } catch (error) {
       console.error("Refund error", error);
       await ctx.reply("Telegram не выполнил возврат. Проверь ID платежа и баланс бота.");
@@ -381,28 +455,69 @@ export function createBot(
 
   bot.callbackQuery("menu:main", async (ctx) => {
     ctx.session.awaitingInput = false;
+    ctx.session.awaitingImagePrompt = false;
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Отправь фото или скриншот прямо в чат.", { reply_markup: mainMenu() });
+    await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", { reply_markup: mainMenu() });
   });
 
   bot.callbackQuery("menu:tariffs", async (ctx) => {
     track(ctx.from.id, "pricing_viewed");
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
+    const subscription = db.getSubscriptionAccess(ctx.from.id);
     await ctx.editMessageText(
       [
-        "⭐ Пакеты запросов",
+        "⭐ Plus и запросы",
         "",
+        subscription.active
+          ? `Plus активен до ${formatUnixDate(subscription.periodEnd!)}${subscription.autoRenew ? " · автопродление включено" : " · автопродление выключено"}`
+          : `Plus — ${config.PLUS_IMAGE_LIMIT} картинок каждые ${config.IMAGE_WINDOW_HOURS} ч за ${config.PLUS_SUBSCRIPTION_STARS} Stars в месяц`,
+        "",
+        "Разовые пакеты для ответов и разбора фото:",
         `Старт — ${CREDIT_PACKAGES.start.credits} запросов за ${CREDIT_PACKAGES.start.stars} Stars`,
         `Плюс — ${CREDIT_PACKAGES.plus.credits} запросов за ${CREDIT_PACKAGES.plus.stars} Stars`,
         `Про — ${CREDIT_PACKAGES.pro.credits} запросов за ${CREDIT_PACKAGES.pro.stars} Stars`,
         "",
         balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
         "",
-        "Запросы не сгорают. Оплата проходит внутри Telegram.",
+        "Разовые запросы не сгорают. Plus продлевается каждые 30 дней, отменить можно здесь.",
       ].join("\n"),
-      { reply_markup: tariffsMenu() },
+      { reply_markup: subscription.active
+        ? subscriptionMenu(subscription.autoRenew)
+        : tariffsMenu() },
     );
+  });
+
+  bot.callbackQuery("subscribe:plus", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    track(ctx.from.id, "subscription_invoice_created", "plus", {
+      stars: config.PLUS_SUBSCRIPTION_STARS,
+    });
+    const invoiceUrl = await ctx.api.raw.createInvoiceLink({
+      title: "ОтветьУмно Plus",
+      description: `${config.PLUS_IMAGE_LIMIT} AI-картинок каждые ${config.IMAGE_WINDOW_HOURS} часов. Подписка продлевается автоматически каждые 30 дней.`,
+      payload: createSubscriptionPayload(ctx.from.id),
+      currency: "XTR",
+      prices: [{ label: "Plus на 30 дней", amount: config.PLUS_SUBSCRIPTION_STARS }],
+      subscription_period: PLUS_SUBSCRIPTION_PERIOD_SECONDS,
+    });
+    await ctx.reply(
+      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\nАвтопродление можно отключить в любой момент.`,
+      { reply_markup: new InlineKeyboard().url("Открыть оплату", invoiceUrl) },
+    );
+  });
+
+  bot.callbackQuery(/^subscription:(cancel|resume)$/, async (ctx) => {
+    const subscription = db.getSubscriptionAccess(ctx.from.id);
+    if (!subscription.active || !subscription.latestChargeId) {
+      await ctx.answerCallbackQuery("Активная подписка не найдена");
+      return;
+    }
+    const cancel = ctx.match[1] === "cancel";
+    await ctx.api.editUserStarSubscription(ctx.from.id, subscription.latestChargeId, cancel);
+    db.setSubscriptionAutoRenew(ctx.from.id, !cancel);
+    await ctx.answerCallbackQuery(cancel ? "Автопродление выключено" : "Автопродление включено");
+    await ctx.editMessageReplyMarkup({ reply_markup: subscriptionMenu(!cancel) });
   });
 
   bot.callbackQuery(/^buy:(.+)$/, async (ctx) => {
@@ -430,14 +545,21 @@ export function createBot(
   bot.callbackQuery("menu:payments", async (ctx) => {
     await ctx.answerCallbackQuery();
     const payments = db.recentPayments(ctx.from.id, 10);
-    const text = payments.length
-      ? `🧾 Мои покупки\n\n${payments.map((payment, index) => [
+    const subscriptions = db.recentSubscriptionPayments(ctx.from.id, 10);
+    const sections: string[] = [];
+    if (subscriptions.length) sections.push(`Plus:\n${subscriptions.map((payment, index) => [
+      `${index + 1}. Plus · ${payment.stars} ⭐`,
+      payment.status === "paid" ? `Доступ до: ${formatUnixDate(payment.periodEnd)}` : "Статус: возврат выполнен",
+      `ID: ${payment.chargeId}`,
+      `Дата: ${formatPaymentDate(payment.createdAt)}`,
+    ].join("\n")).join("\n\n")}`);
+    if (payments.length) sections.push(`Разовые запросы:\n${payments.map((payment, index) => [
         `${index + 1}. ${payment.credits} запросов · ${payment.stars} ⭐`,
         payment.status === "paid" ? "Статус: оплачено" : "Статус: возврат выполнен",
         `ID: ${payment.chargeId}`,
         `Дата: ${formatPaymentDate(payment.createdAt)}`,
-      ].join("\n")).join("\n\n")}`
-      : "Покупок пока нет.";
+      ].join("\n")).join("\n\n")}`);
+    const text = sections.length ? `🧾 Мои покупки\n\n${sections.join("\n\n")}` : "Покупок пока нет.";
     await ctx.editMessageText(text, {
       reply_markup: new InlineKeyboard().text("← К тарифам", "menu:tariffs"),
     });
@@ -451,8 +573,18 @@ export function createBot(
   bot.callbackQuery("menu:balance", async (ctx) => {
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
+    const images = db.getImageAllowance(ctx.from.id, imageLimits);
+    const subscription = db.getSubscriptionAccess(ctx.from.id);
     await ctx.editMessageText(
-      balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
+      [
+        balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        "",
+        imageAllowanceText(images),
+        ...(subscription.active ? [
+          `Plus до: ${formatUnixDate(subscription.periodEnd!)}`,
+          `Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}`,
+        ] : []),
+      ].join("\n"),
       { reply_markup: new InlineKeyboard()
         .text("⭐ Купить запросы", "menu:tariffs").row()
         .text("← В меню", "menu:main") },
@@ -556,17 +688,41 @@ export function createBot(
     await ctx.reply("Отправь новую фотографию через камеру или скрепку возле поля сообщения.");
   });
 
+  bot.callbackQuery(["image:create", "image:again"], async (ctx) => {
+    ctx.session.awaitingImagePrompt = true;
+    delete ctx.session.visualResponseId;
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Что нарисовать? Опиши сюжет, стиль и важные детали одним сообщением.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
+  });
+
+  bot.callbackQuery("image:cancel", async (ctx) => {
+    ctx.session.awaitingImagePrompt = false;
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", {
+      reply_markup: mainMenu(),
+    });
+  });
+
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
+    const imagePrompt = extractImagePrompt(ctx.message.text, ctx.session.awaitingImagePrompt);
+    if (imagePrompt !== undefined) {
+      ctx.session.awaitingImagePrompt = false;
+      if (!imagePrompt) {
+        await ctx.reply("Добавь описание: что именно нарисовать, в каком стиле и с какими деталями.");
+        return;
+      }
+      await generateImageForUser(ctx, db, ai, imagePrompt, imageLimits, track);
+      return;
+    }
     if (ctx.session.visualResponseId) {
       await continueVisualConversation(ctx, db, ai, ctx.message.text, track);
       return;
     }
-    if (!readyForInput(ctx)) {
-      await ctx.reply("Отправь фотографию или скриншот, и я всё объясню.", { reply_markup: mainMenu() });
-      return;
-    }
-    await generateForUser(ctx, db, ai, ctx.message.text, track);
+    if (readyForInput(ctx)) await generateForUser(ctx, db, ai, ctx.message.text, track);
+    else await answerGeneralForUser(ctx, db, ai, ctx.message.text, track, "text");
   });
 
   bot.on("message:photo", async (ctx) => {
@@ -625,10 +781,6 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
-    if (!readyForInput(ctx)) {
-      await ctx.reply("Сначала выбери задачу в меню.", { reply_markup: mainMenu() });
-      return;
-    }
     if ((ctx.message.voice.file_size ?? 0) > MAX_VOICE_BYTES) {
       await ctx.reply("Голосовое сообщение слишком большое. Максимальный размер — 10 МБ.");
       return;
@@ -643,9 +795,11 @@ export function createBot(
         );
         const transcript = await ai.transcribe(audio, "voice.ogg");
         if (!transcript) throw new Error("Не удалось распознать голос");
-        const result = await ai.generate(ctx.session.flow!, ctx.session.category!, transcript);
+        const result = await ai.answerGeneral(transcript);
         return { transcript, result };
       });
+      ctx.session.flow = "analyze";
+      ctx.session.category = "auto";
       finishGeneration(ctx, db, transcript, result, reservation);
       track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
@@ -732,6 +886,63 @@ async function generateForUser(
     await replyResult(ctx, result);
   } catch (error) {
     db.releaseRequest(reservation);
+    await handleError(ctx, error);
+  }
+}
+
+async function answerGeneralForUser(
+  ctx: BotContext,
+  db: BotDatabase,
+  ai: AiService,
+  source: string,
+  track: TrackEvent,
+  inputType: "text" | "voice",
+): Promise<void> {
+  const reservation = await reserveForUser(ctx, db, track);
+  if (!reservation) return;
+  try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+    const result = cleanTelegramText(await ai.answerGeneral(source));
+    ctx.session.flow = "analyze";
+    ctx.session.category = "auto";
+    finishGeneration(ctx, db, source, result, reservation);
+    track(ctx.from!.id, `generation_${inputType}`, "general", { input_type: inputType });
+    await replyResult(ctx, result);
+  } catch (error) {
+    db.releaseRequest(reservation);
+    await handleError(ctx, error);
+  }
+}
+
+async function generateImageForUser(
+  ctx: BotContext,
+  db: BotDatabase,
+  ai: AiService,
+  prompt: string,
+  limits: { plus: number; pro: number; global: number; windowSeconds: number },
+  track: TrackEvent,
+): Promise<void> {
+  const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
+  if (!("id" in reservation)) {
+    track(ctx.from!.id, "image_limit_shown", reservation.reason);
+    await ctx.reply(imageLimitMessage(reservation), {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
+    });
+    return;
+  }
+  try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "upload_photo");
+    const image = await ai.generateImage(prompt, ctx.from!.id);
+    db.completeImageGeneration(reservation.id);
+    track(ctx.from!.id, "image_created", reservation.allowance.tier, {
+      tier: reservation.allowance.tier,
+    });
+    await ctx.replyWithPhoto(new InputFile(image, "otvet-umno.png"), {
+      caption: `Готово 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
+      reply_markup: imageResultMenu(),
+    });
+  } catch (error) {
+    db.releaseImageGeneration(reservation.id);
     await handleError(ctx, error);
   }
 }
@@ -892,6 +1103,58 @@ async function handleError(ctx: BotContext, error: unknown): Promise<void> {
 function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
   if (plan === "pro") return "Тариф: безлимит";
   return `Бесплатно осталось: ${Math.max(0, freeLimit - freeUsed)}\nКупленных запросов: ${credits}`;
+}
+
+function imageAllowanceText(allowance: ImageAllowance): string {
+  if (allowance.tier === "free") {
+    return `Картинки: ${allowance.remaining > 0 ? "1 пробная доступна" : "пробная использована"}`;
+  }
+  const tier = allowance.tier === "pro" ? "команда" : "Plus";
+  return `Картинки (${tier}): осталось ${allowance.remaining} из ${allowance.limit}`;
+}
+
+function imageLimitMessage(allowance: ImageAllowance): string {
+  if (allowance.reason === "trial_used") {
+    return "Пробная картинка уже создана. С Plus доступно больше генераций каждый день.";
+  }
+  const wait = allowance.resetAt ? formatWait(allowance.resetAt) : "чуть позже";
+  if (allowance.reason === "global_limit") {
+    return `Сегодня бот уже создал много картинок. Новый слот появится ${wait}. Твои личные попытки не списались.`;
+  }
+  return `Лимит картинок на текущие 24 часа закончился. Следующая попытка появится ${wait}. Подписка продолжает действовать.`;
+}
+
+function extractImagePrompt(text: string, awaiting: boolean | undefined): string | undefined {
+  if (awaiting) return text.trim();
+  const match = text.trim().match(/^(?:пожалуйста[, ]+)?(?:нарисуй|создай\s+(?:мне\s+)?(?:картин(?:у|ку)|изображение)|сгенерируй\s+(?:мне\s+)?(?:картин(?:у|ку)|изображение))\s*[:,-]?\s*(.*)$/iu);
+  return match?.[1]?.trim();
+}
+
+function formatWait(resetAt: number): string {
+  const seconds = Math.max(0, resetAt - Math.floor(Date.now() / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.max(1, Math.ceil((seconds % 3600) / 60));
+  if (hours === 0) return `примерно через ${minutes} мин.`;
+  return `примерно через ${hours} ч ${minutes} мин.`;
+}
+
+function formatUnixDate(timestamp: number): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Irkutsk",
+  }).format(new Date(timestamp * 1000));
+}
+
+function subscriptionMenu(autoRenew: boolean): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(
+      autoRenew ? "Отключить автопродление" : "Включить автопродление",
+      autoRenew ? "subscription:cancel" : "subscription:resume",
+    ).row()
+    .text("➕ Купить разовые запросы", "buy:start").row()
+    .text("🧾 Мои покупки", "menu:payments").row()
+    .text("← В меню", "menu:main");
 }
 
 function formatPaymentDate(value: string): string {

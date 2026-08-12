@@ -12,6 +12,8 @@ test("business report exposes the key product and payment metrics", () => {
     photoRequests: 50,
     textRequests: 30,
     voiceRequests: 10,
+    createdImages: 6,
+    activeSubscriptions: 2,
     purchases: 4,
     payingUsers: 3,
     grossStars: 696,

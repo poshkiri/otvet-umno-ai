@@ -11,7 +11,14 @@ const config = loadConfig();
 const database = new BotDatabase(config.DATABASE_PATH, config.FREE_REQUEST_LIMIT);
 const recoveredRequests = database.recoverReservedRequests();
 if (recoveredRequests) console.log(`Возвращено зависших резервов: ${recoveredRequests}`);
-const ai = new AiService(config.OPENAI_API_KEY, config.OPENAI_MODEL, config.OPENAI_TRANSCRIBE_MODEL);
+const recoveredImages = database.recoverReservedImageGenerations();
+if (recoveredImages) console.log(`Возвращено зависших генераций картинок: ${recoveredImages}`);
+const ai = new AiService(
+  config.OPENAI_API_KEY,
+  config.OPENAI_MODEL,
+  config.OPENAI_TRANSCRIBE_MODEL,
+  config.OPENAI_IMAGE_MODEL,
+);
 const analytics = new ProductAnalytics(config.POSTHOG_API_KEY, config.POSTHOG_HOST, config.BOT_TOKEN);
 const { bot, drainBackgroundTasks } = createBot(config, database, ai, analytics);
 
@@ -20,13 +27,14 @@ await bot.init();
 await bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "menu", description: "Открыть главное меню" },
+  { command: "image", description: "Создать AI-картинку" },
   { command: "balance", description: "Проверить лимиты" },
   { command: "paysupport", description: "Поддержка по оплате" },
   { command: "myid", description: "Показать мой Telegram ID" },
   { command: "help", description: "Как пользоваться" },
 ]);
 await bot.api.setMyShortDescription(
-  "Отправь фото или скриншот — я распознаю содержимое и объясню простыми словами.",
+  "Фото, голос, вопросы и AI-картинки — объясняю и помогаю простыми словами.",
 );
 await bot.api.setMyDescription(
   [
@@ -35,13 +43,14 @@ await bot.api.setMyDescription(
     "• объяснить товар, этикетку или инструкцию;",
     "• разобрать скриншот, документ или ошибку;",
     "• решить учебную задачу по фотографии;",
-    "• помочь с текстом или перепиской.",
+    "• ответить на текстовый или голосовой вопрос;",
+    "• создать картинку по описанию.",
     "",
     "Просто отправь фотографию — выбирать режим не нужно.",
   ].join("\n"),
 );
 try {
-  const result = await reconcileStarTransactions(bot.api, database);
+  const result = await reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS);
   if (result.credited || result.refunded) {
     console.log(`Stars reconciled: +${result.credited} payments, ${result.refunded} refunds`);
   }
@@ -58,7 +67,7 @@ const runner = run(bot, {
 let reconciliationTask: Promise<void> | undefined;
 const scheduleReconciliation = (): void => {
   if (reconciliationTask) return;
-  reconciliationTask = reconcileStarTransactions(bot.api, database)
+  reconciliationTask = reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS)
     .then((result) => {
       if (result.credited || result.refunded) {
         console.log(`Stars reconciled: +${result.credited} payments, ${result.refunded} refunds`);

@@ -91,3 +91,30 @@ test("Stars reconciliation paginates beyond 100 transactions", async () => {
   assert.equal(db.getAccess(4001).credits, 5050);
   db.close();
 });
+
+test("Stars reconciliation restores a missed Plus subscription", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 0);
+  const now = Math.floor(Date.now() / 1000);
+  const transaction = {
+    id: "subscription-charge-1",
+    amount: 299,
+    date: now,
+    source: {
+      type: "user",
+      transaction_type: "invoice_payment",
+      invoice_payload: "subscription-v1:plus:5001",
+      user: { id: 5001, is_bot: false, first_name: "Test" },
+    },
+  };
+  const api = {
+    getStarTransactions: async ({ offset = 0 }: { offset?: number }) => ({
+      transactions: offset === 0 ? [transaction] : [],
+    }),
+  } as unknown as Api;
+
+  assert.deepEqual(await reconcileStarTransactions(api, db, 299), { credited: 1, refunded: 0 });
+  assert.equal(db.getSubscriptionAccess(5001, now).active, true);
+  assert.equal(db.businessStats(0).activeSubscriptions, 1);
+  db.close();
+});

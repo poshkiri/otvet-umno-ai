@@ -2,6 +2,7 @@ import OpenAI, { toFile } from "openai";
 import {
   buildGenerationPrompt,
   buildRefinementPrompt,
+  GENERAL_ASSISTANT_PROMPT,
   SYSTEM_PROMPT,
   VISION_FOLLOW_UP_PROMPT,
   VISION_SYSTEM_PROMPT,
@@ -22,11 +23,13 @@ export interface VisualResponse {
 export class AiService {
   private readonly client: OpenAI;
   private readonly limiter = new Semaphore(4);
+  private readonly imageLimiter = new Semaphore(2);
 
   constructor(
     apiKey: string,
     private readonly model: string,
     private readonly transcribeModel: string,
+    private readonly imageModel: string,
   ) {
     this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 1 });
   }
@@ -102,6 +105,34 @@ export class AiService {
         language: "ru",
       });
       return transcription.text.trim();
+    });
+  }
+
+  async answerGeneral(question: string): Promise<string> {
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: GENERAL_ASSISTANT_PROMPT,
+        input: question.trim(),
+      });
+      return this.requireText(response.output_text);
+    });
+  }
+
+  async generateImage(prompt: string, telegramId: number): Promise<Uint8Array> {
+    return this.imageLimiter.run(async () => {
+      const response = await this.client.images.generate({
+        model: this.imageModel,
+        prompt: prompt.trim(),
+        size: "1024x1024",
+        quality: "medium",
+        output_format: "png",
+        n: 1,
+        user: String(telegramId),
+      }, { timeout: 120_000, maxRetries: 1 });
+      const encoded = response.data?.[0]?.b64_json;
+      if (!encoded) throw new Error("AI не вернул изображение");
+      return Buffer.from(encoded, "base64");
     });
   }
 

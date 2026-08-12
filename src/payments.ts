@@ -1,4 +1,6 @@
 export const PAYMENT_PAYLOAD_VERSION = "credits-v1";
+export const SUBSCRIPTION_PAYLOAD_VERSION = "subscription-v1";
+export const PLUS_SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60;
 
 export const CREDIT_PACKAGES = {
   start: { id: "start", title: "Старт", credits: 50, stars: 99 },
@@ -34,3 +36,22 @@ export function parsePaymentPayload(payload: string): {
   return { packageId, telegramId };
 }
 
+export function createSubscriptionPayload(telegramId: number): string {
+  return `${SUBSCRIPTION_PAYLOAD_VERSION}:plus:${telegramId}`;
+}
+
+export function parseSubscriptionPayload(payload: string): {
+  planId: "plus";
+  telegramId: number;
+} | undefined {
+  const [version, planId, rawTelegramId, extra] = payload.split(":");
+  const telegramId = Number(rawTelegramId);
+  if (
+    version !== SUBSCRIPTION_PAYLOAD_VERSION
+    || planId !== "plus"
+    || !Number.isSafeInteger(telegramId)
+    || telegramId <= 0
+    || extra !== undefined
+  ) return undefined;
+  return { planId, telegramId };
+}

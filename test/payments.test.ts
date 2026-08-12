@@ -3,13 +3,22 @@ import test from "node:test";
 import {
   CREDIT_PACKAGES,
   createPaymentPayload,
+  createSubscriptionPayload,
   parsePaymentPayload,
+  parseSubscriptionPayload,
 } from "../src/payments.js";
 
 test("payment payload binds a package to a Telegram user", () => {
   const payload = createPaymentPayload("plus", 123456);
   assert.deepEqual(parsePaymentPayload(payload), { packageId: "plus", telegramId: 123456 });
   assert.equal(CREDIT_PACKAGES.plus.stars, 299);
+});
+
+test("subscription payload binds Plus to one Telegram user", () => {
+  const payload = createSubscriptionPayload(12345);
+  assert.deepEqual(parseSubscriptionPayload(payload), { planId: "plus", telegramId: 12345 });
+  assert.equal(parseSubscriptionPayload("subscription-v1:plus:0"), undefined);
+  assert.equal(parseSubscriptionPayload("subscription-v1:pro:12345"), undefined);
 });
 
 test("payment payload rejects unknown or malformed data", () => {

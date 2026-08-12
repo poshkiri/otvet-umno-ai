@@ -20,12 +20,26 @@ services:
         value: gpt-5.6-luna
       - key: OPENAI_TRANSCRIBE_MODEL
         value: gpt-4o-mini-transcribe
+      - key: OPENAI_IMAGE_MODEL
+        value: gpt-image-1-mini
       - key: FREE_REQUEST_LIMIT
         value: "5"
       - key: DATABASE_PATH
         value: /opt/render/project/src/data/bot.db
       - key: ADMIN_TELEGRAM_ID
         sync: false
+      - key: UNLIMITED_TELEGRAM_IDS
+        value: "1264985917"
+      - key: PLUS_SUBSCRIPTION_STARS
+        value: "299"
+      - key: PLUS_IMAGE_LIMIT
+        value: "5"
+      - key: PRO_IMAGE_LIMIT
+        value: "20"
+      - key: GLOBAL_IMAGE_LIMIT
+        value: "30"
+      - key: IMAGE_WINDOW_HOURS
+        value: "24"
       - key: POSTHOG_HOST
         value: https://eu.i.posthog.com
       - key: REPORT_TIMEZONE

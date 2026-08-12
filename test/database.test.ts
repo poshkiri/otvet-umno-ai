@@ -186,3 +186,52 @@ test("acquisition keeps the first source and does not multiply users with repeat
   }]);
   db.close();
 });
+
+test("Plus subscription activates idempotently and can disable renewal", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const id = 5001;
+  const now = 1_800_000_000;
+  db.ensureUser(id);
+
+  assert.equal(db.recordSubscriptionPayment(id, 299, "subscription-v1:plus:5001", "sub-1", now + 2_592_000), true);
+  assert.equal(db.recordSubscriptionPayment(id, 299, "subscription-v1:plus:5001", "sub-1", now + 2_592_000), false);
+  assert.equal(db.getSubscriptionAccess(id, now).active, true);
+  assert.equal(db.recordSubscriptionPayment(id, 299, "subscription-v1:plus:5001", "sub-renewal", now + 5_184_000), true);
+  assert.equal(db.getSubscriptionAccess(id, now).latestChargeId, "sub-1");
+  assert.equal(db.setSubscriptionAutoRenew(id, false), true);
+  assert.equal(db.getSubscriptionAccess(id, now).autoRenew, false);
+  assert.equal(db.markSubscriptionPaymentRefunded("sub-1", now), true);
+  assert.equal(db.getSubscriptionAccess(id, now).active, false);
+  db.close();
+});
+
+test("image limits protect free trial, Plus rolling quota and failed requests", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const limits = { plus: 2, pro: 3, global: 10, windowSeconds: 86_400 };
+  const now = 1_800_000_000;
+  db.ensureUser(5101);
+
+  const free = db.reserveImageGeneration(5101, limits, now);
+  assert.ok("id" in free);
+  if (!("id" in free)) throw new Error("expected image reservation");
+  assert.equal(db.releaseImageGeneration(free.id, now), true);
+  assert.equal(db.getImageAllowance(5101, limits, now).remaining, 1);
+  const retried = db.reserveImageGeneration(5101, limits, now);
+  assert.ok("id" in retried);
+  if (!("id" in retried)) throw new Error("expected image reservation");
+  db.completeImageGeneration(retried.id, now);
+  assert.equal(db.getImageAllowance(5101, limits, now).reason, "trial_used");
+
+  db.ensureUser(5102);
+  db.recordSubscriptionPayment(5102, 299, "subscription-v1:plus:5102", "sub-5102", now + 2_592_000);
+  const first = db.reserveImageGeneration(5102, limits, now);
+  const second = db.reserveImageGeneration(5102, limits, now + 1);
+  assert.ok("id" in first && "id" in second);
+  const blocked = db.reserveImageGeneration(5102, limits, now + 2);
+  assert.equal("id" in blocked, false);
+  if (!("id" in blocked)) assert.equal(blocked.reason, "user_limit");
+  assert.equal(db.getImageAllowance(5102, limits, now + 86_401).allowed, true);
+  db.close();
+});

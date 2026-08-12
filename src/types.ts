@@ -41,6 +41,7 @@ export interface BotSession {
   lastSource?: string;
   lastResult?: string;
   visualResponseId?: string;
+  awaitingImagePrompt?: boolean;
 }
 
 export interface UserAccess {
@@ -86,6 +87,8 @@ export interface BusinessStats {
   photoRequests: number;
   textRequests: number;
   voiceRequests: number;
+  createdImages: number;
+  activeSubscriptions: number;
   purchases: number;
   payingUsers: number;
   grossStars: number;
@@ -93,6 +96,32 @@ export interface BusinessStats {
   refundedStars: number;
   conversionPercent: number;
   popularPackage?: string | undefined;
+}
+
+export type ImageTier = "free" | "plus" | "pro";
+
+export interface ImageAllowance {
+  allowed: boolean;
+  tier: ImageTier;
+  used: number;
+  limit: number;
+  remaining: number;
+  resetAt?: number | undefined;
+  subscriptionEndsAt?: number | undefined;
+  reason?: "trial_used" | "user_limit" | "global_limit" | undefined;
+}
+
+export interface ImageReservation {
+  id: string;
+  allowance: ImageAllowance;
+}
+
+export interface SubscriptionAccess {
+  active: boolean;
+  planId?: "plus" | undefined;
+  periodEnd?: number | undefined;
+  autoRenew: boolean;
+  latestChargeId?: string | undefined;
 }
 
 export interface AcquisitionStats {

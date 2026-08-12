@@ -4,11 +4,12 @@ import { mainMenu, tariffsMenu, visualResultMenu } from "../src/keyboards.js";
 
 test("main menu exposes history and balance while keeping purchase separate", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
+    [{ text: "🎨 Создать картинку", callback_data: "image:create" }],
     [
       { text: "🕘 История", callback_data: "menu:history" },
-      { text: "⚡ Лимит", callback_data: "menu:balance" },
+      { text: "⚡ Лимиты", callback_data: "menu:balance" },
     ],
-    [{ text: "⭐ Купить запросы", callback_data: "menu:tariffs" }],
+    [{ text: "⭐ Plus и запросы", callback_data: "menu:tariffs" }],
   ]);
 });
 

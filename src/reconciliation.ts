@@ -1,8 +1,13 @@
 import type { Api } from "grammy";
 import { BotDatabase } from "./database.js";
-import { CREDIT_PACKAGES, parsePaymentPayload } from "./payments.js";
+import {
+  CREDIT_PACKAGES,
+  PLUS_SUBSCRIPTION_PERIOD_SECONDS,
+  parsePaymentPayload,
+  parseSubscriptionPayload,
+} from "./payments.js";
 
-export async function reconcileStarTransactions(api: Api, db: BotDatabase): Promise<{
+export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusStars = 299): Promise<{
   credited: number;
   refunded: number;
 }> {
@@ -22,6 +27,7 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase): Prom
         && source.invoice_payload
       ) {
         const parsed = parsePaymentPayload(source.invoice_payload);
+        const subscription = parseSubscriptionPayload(source.invoice_payload);
         const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
         if (
           parsed
@@ -38,11 +44,27 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase): Prom
             source.invoice_payload,
             transaction.id,
           )) credited += 1;
+        } else if (
+          subscription
+          && subscription.telegramId === source.user.id
+          && transaction.amount === plusStars
+        ) {
+          db.ensureUser(source.user.id, source.user.username, source.user.first_name);
+          const periodEnd = transaction.date + PLUS_SUBSCRIPTION_PERIOD_SECONDS;
+          if (db.recordSubscriptionPayment(
+            source.user.id,
+            transaction.amount,
+            source.invoice_payload,
+            transaction.id,
+            periodEnd,
+          )) credited += 1;
         }
       }
 
-      if (transaction.receiver?.type === "user" && db.markPaymentRefunded(transaction.id)) {
-        refunded += 1;
+      if (transaction.receiver?.type === "user") {
+        if (db.markPaymentRefunded(transaction.id) || db.markSubscriptionPaymentRefunded(transaction.id)) {
+          refunded += 1;
+        }
       }
     }
     offset += transactions.length;

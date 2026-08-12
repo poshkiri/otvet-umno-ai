@@ -9,8 +9,12 @@ import type {
   CategoryId,
   FlowId,
   GenerationRecord,
+  ImageAllowance,
+  ImageReservation,
+  ImageTier,
   PaymentRecord,
   RequestReservation,
+  SubscriptionAccess,
   UserAccess,
 } from "./types.js";
 
@@ -32,6 +36,7 @@ export class BotDatabase {
         username TEXT,
         first_name TEXT,
         free_used INTEGER NOT NULL DEFAULT 0,
+        free_image_used INTEGER NOT NULL DEFAULT 0,
         credits INTEGER NOT NULL DEFAULT 0,
         plan TEXT NOT NULL DEFAULT 'free',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -119,6 +124,40 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        telegram_id INTEGER PRIMARY KEY,
+        plan_id TEXT NOT NULL CHECK (plan_id = 'plus'),
+        latest_charge_id TEXT NOT NULL,
+        period_end INTEGER NOT NULL,
+        auto_renew INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS subscription_payments (
+        telegram_payment_charge_id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        plan_id TEXT NOT NULL CHECK (plan_id = 'plus'),
+        stars INTEGER NOT NULL,
+        invoice_payload TEXT NOT NULL,
+        period_end INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'paid' CHECK (status IN ('paid', 'refunded')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        refunded_at TEXT,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
+      );
+
+      CREATE TABLE IF NOT EXISTS image_generations (
+        id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        tier TEXT NOT NULL CHECK (tier IN ('free', 'plus', 'pro')),
+        status TEXT NOT NULL DEFAULT 'reserved'
+          CHECK (status IN ('reserved', 'completed', 'released')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -131,9 +170,20 @@ export class BotDatabase {
       CREATE INDEX IF NOT EXISTS product_events_user_date
       ON product_events(telegram_id, created_at DESC);
 
+      CREATE INDEX IF NOT EXISTS subscription_payments_user_date
+      ON subscription_payments(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS image_generations_user_date
+      ON image_generations(telegram_id, created_at DESC);
+
       INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
       SELECT telegram_id, 'legacy' FROM users;
     `);
+
+    const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    if (!userColumns.some((column) => column.name === "free_image_used")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN free_image_used INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   ensureUser(telegramId: number, username?: string, firstName?: string): void {
@@ -351,6 +401,288 @@ export class BotDatabase {
     return recovered;
   }
 
+  getSubscriptionAccess(telegramId: number, now = Math.floor(Date.now() / 1000)): SubscriptionAccess {
+    const row = this.db.prepare(`
+      SELECT plan_id, latest_charge_id, period_end, auto_renew
+      FROM subscriptions WHERE telegram_id = ?
+    `).get(telegramId) as {
+      plan_id: "plus";
+      latest_charge_id: string;
+      period_end: number;
+      auto_renew: number;
+    } | undefined;
+    if (!row || row.period_end <= now) return { active: false, autoRenew: false };
+    return {
+      active: true,
+      planId: row.plan_id,
+      periodEnd: row.period_end,
+      autoRenew: row.auto_renew === 1,
+      latestChargeId: row.latest_charge_id,
+    };
+  }
+
+  recordSubscriptionPayment(
+    telegramId: number,
+    stars: number,
+    invoicePayload: string,
+    chargeId: string,
+    periodEnd: number,
+    startsNewSubscription = false,
+  ): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.db.prepare(`
+        INSERT OR IGNORE INTO subscription_payments (
+          telegram_payment_charge_id, telegram_id, plan_id, stars, invoice_payload, period_end
+        ) VALUES (?, ?, 'plus', ?, ?, ?)
+      `).run(chargeId, telegramId, stars, invoicePayload, periodEnd);
+      if (result.changes === 0) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        INSERT INTO subscriptions (telegram_id, plan_id, latest_charge_id, period_end, auto_renew)
+        VALUES (?, 'plus', ?, ?, 1)
+        ON CONFLICT(telegram_id) DO UPDATE SET
+          plan_id = 'plus',
+          latest_charge_id = CASE WHEN ? = 1
+            THEN excluded.latest_charge_id ELSE subscriptions.latest_charge_id END,
+          period_end = MAX(subscriptions.period_end, excluded.period_end), auto_renew = 1,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(telegramId, chargeId, periodEnd, startsNewSubscription ? 1 : 0);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  setSubscriptionAutoRenew(telegramId: number, autoRenew: boolean): boolean {
+    const result = this.db.prepare(`
+      UPDATE subscriptions SET auto_renew = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE telegram_id = ?
+    `).run(autoRenew ? 1 : 0, telegramId);
+    return result.changes > 0;
+  }
+
+  recentSubscriptionPayments(telegramId: number, limit = 10): Array<{
+    chargeId: string;
+    stars: number;
+    periodEnd: number;
+    status: "paid" | "refunded";
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT telegram_payment_charge_id, stars, period_end, status, created_at
+      FROM subscription_payments WHERE telegram_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(telegramId, limit) as Array<{
+      telegram_payment_charge_id: string;
+      stars: number;
+      period_end: number;
+      status: "paid" | "refunded";
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      chargeId: row.telegram_payment_charge_id,
+      stars: row.stars,
+      periodEnd: row.period_end,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
+  }
+
+  getSubscriptionPayment(chargeId: string): {
+    chargeId: string;
+    telegramId: number;
+    stars: number;
+    status: "paid" | "refunded";
+  } | undefined {
+    const row = this.db.prepare(`
+      SELECT telegram_payment_charge_id, telegram_id, stars, status
+      FROM subscription_payments WHERE telegram_payment_charge_id = ?
+    `).get(chargeId) as {
+      telegram_payment_charge_id: string;
+      telegram_id: number;
+      stars: number;
+      status: "paid" | "refunded";
+    } | undefined;
+    return row ? {
+      chargeId: row.telegram_payment_charge_id,
+      telegramId: row.telegram_id,
+      stars: row.stars,
+      status: row.status,
+    } : undefined;
+  }
+
+  markSubscriptionPaymentRefunded(chargeId: string, now = Math.floor(Date.now() / 1000)): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const payment = this.db.prepare(`
+        SELECT telegram_id, status FROM subscription_payments
+        WHERE telegram_payment_charge_id = ?
+      `).get(chargeId) as { telegram_id: number; status: "paid" | "refunded" } | undefined;
+      if (!payment || payment.status !== "paid") {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        UPDATE subscription_payments SET status = 'refunded', refunded_at = CURRENT_TIMESTAMP
+        WHERE telegram_payment_charge_id = ? AND status = 'paid'
+      `).run(chargeId);
+      this.db.prepare(`
+        UPDATE subscriptions SET period_end = MIN(period_end, ?), auto_renew = 0,
+                                 updated_at = CURRENT_TIMESTAMP
+        WHERE telegram_id = ? AND latest_charge_id = ?
+      `).run(now, payment.telegram_id, chargeId);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  getImageAllowance(
+    telegramId: number,
+    limits: { plus: number; pro: number; global: number; windowSeconds: number },
+    now = Math.floor(Date.now() / 1000),
+  ): ImageAllowance {
+    return this.calculateImageAllowance(telegramId, limits, now);
+  }
+
+  reserveImageGeneration(
+    telegramId: number,
+    limits: { plus: number; pro: number; global: number; windowSeconds: number },
+    now = Math.floor(Date.now() / 1000),
+  ): ImageReservation | ImageAllowance {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const allowance = this.calculateImageAllowance(telegramId, limits, now);
+      if (!allowance.allowed) {
+        this.db.exec("ROLLBACK");
+        return allowance;
+      }
+      const id = randomUUID();
+      this.db.prepare(`
+        INSERT INTO image_generations (id, telegram_id, tier, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(id, telegramId, allowance.tier, now, now);
+      if (allowance.tier === "free") {
+        this.db.prepare(`
+          UPDATE users SET free_image_used = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE telegram_id = ?
+        `).run(telegramId);
+      }
+      this.db.exec("COMMIT");
+      return {
+        id,
+        allowance: {
+          ...allowance,
+          used: allowance.used + 1,
+          remaining: Math.max(0, allowance.remaining - 1),
+        },
+      };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  completeImageGeneration(reservationId: string, now = Math.floor(Date.now() / 1000)): boolean {
+    const result = this.db.prepare(`
+      UPDATE image_generations SET status = 'completed', updated_at = ?
+      WHERE id = ? AND status = 'reserved'
+    `).run(now, reservationId);
+    return result.changes > 0;
+  }
+
+  releaseImageGeneration(reservationId: string, now = Math.floor(Date.now() / 1000)): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.db.prepare(`
+        SELECT telegram_id, tier FROM image_generations WHERE id = ? AND status = 'reserved'
+      `).get(reservationId) as { telegram_id: number; tier: ImageTier } | undefined;
+      if (!row) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        UPDATE image_generations SET status = 'released', updated_at = ? WHERE id = ?
+      `).run(now, reservationId);
+      if (row.tier === "free") {
+        this.db.prepare(`
+          UPDATE users SET free_image_used = 0, updated_at = CURRENT_TIMESTAMP
+          WHERE telegram_id = ?
+        `).run(row.telegram_id);
+      }
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recoverReservedImageGenerations(): number {
+    const rows = this.db.prepare(
+      "SELECT id FROM image_generations WHERE status = 'reserved'",
+    ).all() as Array<{ id: string }>;
+    let recovered = 0;
+    for (const row of rows) {
+      if (this.releaseImageGeneration(row.id)) recovered += 1;
+    }
+    return recovered;
+  }
+
+  private calculateImageAllowance(
+    telegramId: number,
+    limits: { plus: number; pro: number; global: number; windowSeconds: number },
+    now: number,
+  ): ImageAllowance {
+    const user = this.db.prepare(`
+      SELECT free_image_used, plan FROM users WHERE telegram_id = ?
+    `).get(telegramId) as { free_image_used: number; plan: string } | undefined;
+    const subscription = this.getSubscriptionAccess(telegramId, now);
+    const tier: ImageTier = user?.plan === "pro" ? "pro" : subscription.active ? "plus" : "free";
+    const limit = tier === "pro" ? limits.pro : tier === "plus" ? limits.plus : 1;
+    const cutoff = now - limits.windowSeconds;
+    const global = this.db.prepare(`
+      SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM image_generations
+      WHERE status IN ('reserved', 'completed') AND created_at > ?
+    `).get(cutoff) as { used: number; oldest: number | null };
+    if (global.used >= limits.global) {
+      return {
+        allowed: false, tier, used: 0, limit, remaining: 0,
+        resetAt: (global.oldest ?? now) + limits.windowSeconds,
+        subscriptionEndsAt: subscription.periodEnd,
+        reason: "global_limit",
+      };
+    }
+    if (tier === "free") {
+      const used = user?.free_image_used ?? 0;
+      return {
+        allowed: used === 0, tier, used, limit, remaining: used === 0 ? 1 : 0,
+        subscriptionEndsAt: subscription.periodEnd,
+        reason: used === 0 ? undefined : "trial_used",
+      };
+    }
+    const usage = this.db.prepare(`
+      SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM image_generations
+      WHERE telegram_id = ? AND status IN ('reserved', 'completed') AND created_at > ?
+    `).get(telegramId, cutoff) as { used: number; oldest: number | null };
+    return {
+      allowed: usage.used < limit,
+      tier,
+      used: usage.used,
+      limit,
+      remaining: Math.max(0, limit - usage.used),
+      resetAt: usage.used >= limit ? (usage.oldest ?? now) + limits.windowSeconds : undefined,
+      subscriptionEndsAt: subscription.periodEnd,
+      reason: usage.used >= limit ? "user_limit" : undefined,
+    };
+  }
+
   addCredits(telegramId: number, amount: number): void {
     this.db.prepare(
       "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
@@ -552,25 +884,47 @@ export class BotDatabase {
       `SELECT COUNT(DISTINCT telegram_id) AS value FROM product_events WHERE 1 = 1${customerFilter}${filter}`,
     );
     const generations = scalar(`SELECT COUNT(*) AS value FROM generations WHERE 1 = 1${customerFilter}${filter}`);
-    const purchases = scalar(`SELECT COUNT(*) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`);
-    const payingUsers = scalar(
-      `SELECT COUNT(DISTINCT telegram_id) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`,
-    );
+    const creditPurchases = scalar(`SELECT COUNT(*) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`);
+    const subscriptionPurchases = scalar(`SELECT COUNT(*) AS value FROM subscription_payments WHERE 1 = 1${customerFilter}${filter}`);
+    const purchases = creditPurchases + subscriptionPurchases;
+    const payingParams = periodDays === 0 ? [] : [period, period];
+    const payingUsers = (this.db.prepare(`
+      SELECT COUNT(DISTINCT telegram_id) AS value FROM (
+        SELECT telegram_id FROM payments WHERE 1 = 1${customerFilter}${filter}
+        UNION ALL
+        SELECT telegram_id FROM subscription_payments WHERE 1 = 1${customerFilter}${filter}
+      )
+    `).get(...payingParams) as { value: number }).value;
     const grossStars = scalar(
       `SELECT COALESCE(SUM(stars), 0) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`,
+    ) + scalar(
+      `SELECT COALESCE(SUM(stars), 0) AS value FROM subscription_payments WHERE 1 = 1${customerFilter}${filter}`,
     );
     const refundFilter = periodDays === 0 ? "" : " AND refunded_at >= datetime('now', ?)";
     const refunds = scalar(
       `SELECT COUNT(*) AS value FROM payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
+    ) + scalar(
+      `SELECT COUNT(*) AS value FROM subscription_payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
     );
     const refundedStars = scalar(
       `SELECT COALESCE(SUM(stars), 0) AS value FROM payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
+    ) + scalar(
+      `SELECT COALESCE(SUM(stars), 0) AS value FROM subscription_payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
     );
-    const packageParams = periodDays === 0 ? [] : [period];
+    const packageParams = periodDays === 0 ? [] : [period, period];
     const popularPackage = this.db.prepare(`
-      SELECT package_id FROM payments WHERE 1 = 1${customerFilter}${filter}
+      SELECT package_id FROM (
+        SELECT package_id FROM payments WHERE 1 = 1${customerFilter}${filter}
+        UNION ALL
+        SELECT 'plus_subscription' AS package_id FROM subscription_payments
+        WHERE 1 = 1${customerFilter}${filter}
+      )
       GROUP BY package_id ORDER BY COUNT(*) DESC, package_id LIMIT 1
     `).get(...packageParams) as { package_id: string } | undefined;
+    const activeSubscriptions = scalar(`
+      SELECT COUNT(*) AS value FROM subscriptions
+      WHERE period_end > unixepoch()${customerFilter}
+    `, false);
 
     return {
       periodDays,
@@ -581,6 +935,8 @@ export class BotDatabase {
       photoRequests: eventCountForPeriod("generation_photo"),
       textRequests: eventCountForPeriod("generation_text"),
       voiceRequests: eventCountForPeriod("generation_voice"),
+      createdImages: eventCountForPeriod("image_created"),
+      activeSubscriptions,
       purchases,
       payingUsers,
       grossStars,
@@ -599,8 +955,13 @@ export class BotDatabase {
              COALESCE(SUM(p.stars), 0) AS stars
       FROM user_acquisition a
       LEFT JOIN (
-        SELECT telegram_id, SUM(CASE WHEN status = 'paid' THEN stars ELSE 0 END) AS stars
-        FROM payments GROUP BY telegram_id
+        SELECT telegram_id, SUM(stars) AS stars FROM (
+          SELECT telegram_id, CASE WHEN status = 'paid' THEN stars ELSE 0 END AS stars
+          FROM payments
+          UNION ALL
+          SELECT telegram_id, CASE WHEN status = 'paid' THEN stars ELSE 0 END AS stars
+          FROM subscription_payments
+        ) GROUP BY telegram_id
       ) p ON p.telegram_id = a.telegram_id
       WHERE a.telegram_id NOT IN (SELECT telegram_id FROM users WHERE plan = 'pro')
       GROUP BY a.source

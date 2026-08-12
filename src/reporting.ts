@@ -15,7 +15,7 @@ const PERIOD_LABELS: Record<BusinessStats["periodDays"], string> = {
 export function formatBusinessReport(stats: BusinessStats, starBalance?: number): string {
   const packageName = stats.popularPackage && isCreditPackageId(stats.popularPackage)
     ? CREDIT_PACKAGES[stats.popularPackage].title
-    : "пока нет";
+    : stats.popularPackage === "plus_subscription" ? "Подписка Plus" : "пока нет";
   const netStars = stats.grossStars - stats.refundedStars;
   return [
     `📊 ОтветьУмно AI · ${PERIOD_LABELS[stats.periodDays]}`,
@@ -30,8 +30,10 @@ export function formatBusinessReport(stats: BusinessStats, starBalance?: number)
     `Фото и скриншоты: ${stats.photoRequests}`,
     `Текст: ${stats.textRequests}`,
     `Голосовые: ${stats.voiceRequests}`,
+    `Создано картинок: ${stats.createdImages}`,
     "",
     "⭐ Продажи",
+    `Активных подписок Plus: ${stats.activeSubscriptions}`,
     `Покупок: ${stats.purchases}`,
     `Платящих пользователей: ${stats.payingUsers}`,
     `Конверсия активных в оплату: ${formatPercent(stats.conversionPercent)}`,
