@@ -8,7 +8,11 @@ import { ProductAnalytics } from "./analytics.js";
 import { startDailyReporter } from "./reporting.js";
 
 const config = loadConfig();
-const database = new BotDatabase(config.DATABASE_PATH, config.FREE_REQUEST_LIMIT);
+const database = new BotDatabase(
+  config.DATABASE_PATH,
+  config.FREE_REQUEST_LIMIT,
+  config.PLUS_REQUEST_LIMIT,
+);
 const recoveredRequests = database.recoverReservedRequests();
 if (recoveredRequests) console.log(`Возвращено зависших резервов: ${recoveredRequests}`);
 const recoveredImages = database.recoverReservedImageGenerations();
@@ -18,6 +22,7 @@ const ai = new AiService(
   config.OPENAI_MODEL,
   config.OPENAI_TRANSCRIBE_MODEL,
   config.OPENAI_IMAGE_MODEL,
+  config.MAX_OUTPUT_TOKENS,
 );
 const analytics = new ProductAnalytics(config.POSTHOG_API_KEY, config.POSTHOG_HOST, config.BOT_TOKEN);
 const { bot, drainBackgroundTasks } = createBot(config, database, ai, analytics);

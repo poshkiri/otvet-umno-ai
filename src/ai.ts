@@ -30,6 +30,7 @@ export class AiService {
     private readonly model: string,
     private readonly transcribeModel: string,
     private readonly imageModel: string,
+    private readonly maxOutputTokens = 1_000,
   ) {
     this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 1 });
   }
@@ -40,6 +41,7 @@ export class AiService {
         model: this.model,
         instructions: SYSTEM_PROMPT,
         input: buildGenerationPrompt(flow, category, source),
+        max_output_tokens: this.maxOutputTokens,
       });
       return this.requireText(response.output_text);
     });
@@ -79,6 +81,7 @@ export class AiService {
           role: "user",
           content,
         }],
+        max_output_tokens: this.maxOutputTokens,
       });
       return { text: this.requireText(response.output_text), responseId: response.id };
     });
@@ -91,6 +94,7 @@ export class AiService {
         instructions: VISION_FOLLOW_UP_PROMPT,
         previous_response_id: previousResponseId,
         input: question.trim(),
+        max_output_tokens: this.maxOutputTokens,
       });
       return { text: this.requireText(response.output_text), responseId: response.id };
     });
@@ -114,6 +118,7 @@ export class AiService {
         model: this.model,
         instructions: GENERAL_ASSISTANT_PROMPT,
         input: question.trim(),
+        max_output_tokens: this.maxOutputTokens,
       });
       return this.requireText(response.output_text);
     });
@@ -175,6 +180,7 @@ export class AiService {
         model: this.model,
         instructions: SYSTEM_PROMPT,
         input: buildRefinementPrompt(refinement, source, previousResult),
+        max_output_tokens: this.maxOutputTokens,
       });
       return this.requireText(response.output_text);
     });

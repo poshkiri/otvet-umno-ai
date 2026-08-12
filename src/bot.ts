@@ -217,7 +217,7 @@ export function createBot(
         period_end: periodEnd,
       });
       await ctx.reply(
-        `Plus активирован ✅\n\nТеперь доступно ${config.PLUS_IMAGE_LIMIT} картинок каждые ${config.IMAGE_WINDOW_HOURS} ч. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+        `Plus активирован ✅\n\nДоступно ${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
         { reply_markup: mainMenu() },
       );
       if (config.ADMIN_TELEGRAM_ID) {
@@ -467,13 +467,20 @@ export function createBot(
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
     const subscription = db.getSubscriptionAccess(ctx.from.id);
+    const subscriptionRequests = db.getSubscriptionRequestAllowance(
+      ctx.from.id,
+      config.PLUS_REQUEST_LIMIT,
+    );
     await ctx.editMessageText(
       [
         "⭐ Plus и запросы",
         "",
         subscription.active
           ? `Plus активен до ${formatUnixDate(subscription.periodEnd!)}${subscription.autoRenew ? " · автопродление включено" : " · автопродление выключено"}`
-          : `Plus — ${config.PLUS_IMAGE_LIMIT} картинок каждые ${config.IMAGE_WINDOW_HOURS} ч за ${config.PLUS_SUBSCRIPTION_STARS} Stars в месяц`,
+          : `Plus — ${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней за ${config.PLUS_SUBSCRIPTION_STARS} Stars`,
+        ...(subscriptionRequests.active
+          ? [`Осталось AI-запросов Plus: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit}`]
+          : []),
         "",
         "Разовые пакеты для ответов и разбора фото:",
         `Старт — ${CREDIT_PACKAGES.start.credits} запросов за ${CREDIT_PACKAGES.start.stars} Stars`,
@@ -497,14 +504,14 @@ export function createBot(
     });
     const invoiceUrl = await ctx.api.raw.createInvoiceLink({
       title: "ОтветьУмно Plus",
-      description: `${config.PLUS_IMAGE_LIMIT} AI-картинок каждые ${config.IMAGE_WINDOW_HOURS} часов. Подписка продлевается автоматически каждые 30 дней.`,
+      description: `${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} AI-картинок на 30 дней.`,
       payload: createSubscriptionPayload(ctx.from.id),
       currency: "XTR",
       prices: [{ label: "Plus на 30 дней", amount: config.PLUS_SUBSCRIPTION_STARS }],
       subscription_period: PLUS_SUBSCRIPTION_PERIOD_SECONDS,
     });
     await ctx.reply(
-      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\nАвтопродление можно отключить в любой момент.`,
+      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-запросов + ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
       { reply_markup: new InlineKeyboard().url("Открыть оплату", invoiceUrl) },
     );
   });
@@ -810,10 +817,16 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
+    if (ctx.message.voice.duration > config.MAX_VOICE_SECONDS) {
+      await ctx.reply(`Голосовое слишком длинное. Максимум — ${Math.floor(config.MAX_VOICE_SECONDS / 60)} мин.`);
+      return;
+    }
     if ((ctx.message.voice.file_size ?? 0) > MAX_VOICE_BYTES) {
       await ctx.reply("Голосовое сообщение слишком большое. Максимальный размер — 10 МБ.");
       return;
     }
+    const reservation = await reserveForUser(ctx, db, track);
+    if (!reservation) return;
     try {
       await ctx.api.sendChatAction(ctx.chat.id, "typing");
       const transcript = await resourceLimiter.run(async () => {
@@ -826,6 +839,7 @@ export function createBot(
       });
       const editPrompt = extractImageEditPrompt(transcript);
       if (editPrompt && ctx.session.visualSources?.length) {
+        db.commitRequest(reservation);
         await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
         await editImageForUser(
           ctx, config, db, ai, ctx.session.visualSources, editPrompt,
@@ -833,8 +847,6 @@ export function createBot(
         );
         return;
       }
-      const reservation = await reserveForUser(ctx, db, track);
-      if (!reservation) return;
       let result: string;
       try {
         result = await ai.answerGeneral(transcript);
@@ -849,6 +861,7 @@ export function createBot(
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
     } catch (error) {
+      db.releaseRequest(reservation);
       await handleError(ctx, error);
     }
   });
@@ -1227,13 +1240,13 @@ function imageAllowanceText(allowance: ImageAllowance): string {
 
 function imageLimitMessage(allowance: ImageAllowance): string {
   if (allowance.reason === "trial_used") {
-    return "Пробная картинка уже создана. С Plus доступно больше генераций каждый день.";
+    return "Пробная картинка уже создана. С Plus доступно 20 генераций на 30 дней.";
   }
   const wait = allowance.resetAt ? formatWait(allowance.resetAt) : "чуть позже";
   if (allowance.reason === "global_limit") {
-    return `Сегодня бот уже создал много картинок. Новый слот появится ${wait}. Твои личные попытки не списались.`;
+    return `Общий защитный лимит картинок временно исчерпан. Новый слот появится ${wait}. Твои личные попытки не списались.`;
   }
-  return `Лимит картинок на текущие 24 часа закончился. Следующая попытка появится ${wait}. Подписка продолжает действовать.`;
+  return `Лимит картинок на текущие 30 дней закончился. Следующая попытка появится ${wait}. Подписка продолжает действовать.`;
 }
 
 function extractImagePrompt(text: string, awaiting: boolean | undefined): string | undefined {

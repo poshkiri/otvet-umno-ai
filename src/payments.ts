@@ -3,9 +3,9 @@ export const SUBSCRIPTION_PAYLOAD_VERSION = "subscription-v1";
 export const PLUS_SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60;
 
 export const CREDIT_PACKAGES = {
-  start: { id: "start", title: "Старт", credits: 50, stars: 99 },
-  plus: { id: "plus", title: "Плюс", credits: 200, stars: 299 },
-  pro: { id: "pro", title: "Про", credits: 500, stars: 599 },
+  start: { id: "start", title: "Старт", credits: 50, stars: 149 },
+  plus: { id: "plus", title: "Плюс", credits: 200, stars: 549 },
+  pro: { id: "pro", title: "Про", credits: 500, stars: 1299 },
 } as const;
 
 export type CreditPackageId = keyof typeof CREDIT_PACKAGES;

@@ -126,6 +126,14 @@ export interface SubscriptionAccess {
   latestChargeId?: string | undefined;
 }
 
+export interface SubscriptionRequestAllowance {
+  active: boolean;
+  used: number;
+  limit: number;
+  remaining: number;
+  resetAt?: number | undefined;
+}
+
 export interface AcquisitionStats {
   source: string;
   users: number;

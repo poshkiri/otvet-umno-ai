@@ -11,7 +11,9 @@ import {
 test("payment payload binds a package to a Telegram user", () => {
   const payload = createPaymentPayload("plus", 123456);
   assert.deepEqual(parsePaymentPayload(payload), { packageId: "plus", telegramId: 123456 });
-  assert.equal(CREDIT_PACKAGES.plus.stars, 299);
+  assert.equal(CREDIT_PACKAGES.start.stars, 149);
+  assert.equal(CREDIT_PACKAGES.plus.stars, 549);
+  assert.equal(CREDIT_PACKAGES.pro.stars, 1299);
 });
 
 test("subscription payload binds Plus to one Telegram user", () => {

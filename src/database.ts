@@ -15,13 +15,18 @@ import type {
   PaymentRecord,
   RequestReservation,
   SubscriptionAccess,
+  SubscriptionRequestAllowance,
   UserAccess,
 } from "./types.js";
 
 export class BotDatabase {
   private readonly db: DatabaseSync;
 
-  constructor(path: string, private readonly freeLimit: number) {
+  constructor(
+    path: string,
+    private readonly freeLimit: number,
+    private readonly subscriptionLimit = 50,
+  ) {
     const absolutePath = resolve(path);
     mkdirSync(dirname(absolutePath), { recursive: true });
     this.db = new DatabaseSync(absolutePath);
@@ -158,6 +163,16 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS subscription_request_usage (
+        id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'reserved'
+          CHECK (status IN ('reserved', 'consumed', 'released')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -175,6 +190,9 @@ export class BotDatabase {
 
       CREATE INDEX IF NOT EXISTS image_generations_user_date
       ON image_generations(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS subscription_request_usage_user_date
+      ON subscription_request_usage(telegram_id, created_at DESC);
 
       INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
       SELECT telegram_id, 'legacy' FROM users;
@@ -279,7 +297,11 @@ export class BotDatabase {
     return this.getAccess(telegramId);
   }
 
-  reserveRequest(telegramId: number): RequestReservation | undefined {
+  reserveRequest(
+    telegramId: number,
+    windowSeconds = 30 * 24 * 60 * 60,
+    now = Math.floor(Date.now() / 1000),
+  ): RequestReservation | undefined {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const row = this.db.prepare(
@@ -299,6 +321,40 @@ export class BotDatabase {
         this.db.prepare(
           "UPDATE users SET free_used = free_used + 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
         ).run(telegramId);
+      } else if (this.subscriptionLimit > 0 && this.getSubscriptionAccess(telegramId, now).active) {
+        const usage = this.db.prepare(`
+          SELECT COUNT(*) AS used FROM subscription_request_usage
+          WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
+        `).get(telegramId, now - windowSeconds) as { used: number };
+        if (usage.used < this.subscriptionLimit) {
+          const id = `subscription:${randomUUID()}`;
+          this.db.prepare(`
+            INSERT INTO subscription_request_usage (id, telegram_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+          `).run(id, telegramId, now, now);
+          this.db.exec("COMMIT");
+          return { id };
+        }
+        if (row.credits <= 0) {
+          this.db.exec("ROLLBACK");
+          return undefined;
+        }
+        source = "credits";
+        const payment = this.db.prepare(`
+          SELECT telegram_payment_charge_id FROM payments
+          WHERE telegram_id = ? AND status = 'paid' AND remaining_credits > 0
+          ORDER BY created_at, rowid LIMIT 1
+        `).get(telegramId) as { telegram_payment_charge_id: string } | undefined;
+        paymentChargeId = payment?.telegram_payment_charge_id ?? null;
+        this.db.prepare(
+          "UPDATE users SET credits = credits - 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ? AND credits > 0",
+        ).run(telegramId);
+        if (paymentChargeId) {
+          this.db.prepare(`
+            UPDATE payments SET remaining_credits = remaining_credits - 1
+            WHERE telegram_payment_charge_id = ? AND remaining_credits > 0
+          `).run(paymentChargeId);
+        }
       } else if (row.credits > 0) {
         source = "credits";
         const payment = this.db.prepare(`
@@ -335,6 +391,13 @@ export class BotDatabase {
   }
 
   commitRequest(reservationId: string): boolean {
+    if (reservationId.startsWith("subscription:")) {
+      const result = this.db.prepare(`
+        UPDATE subscription_request_usage SET status = 'consumed', updated_at = ?
+        WHERE id = ? AND status = 'reserved'
+      `).run(Math.floor(Date.now() / 1000), reservationId);
+      return result.changes > 0;
+    }
     const result = this.db.prepare(`
       UPDATE request_reservations SET status = 'consumed', updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND status = 'reserved'
@@ -343,6 +406,13 @@ export class BotDatabase {
   }
 
   releaseRequest(reservationId: string): boolean {
+    if (reservationId.startsWith("subscription:")) {
+      const result = this.db.prepare(`
+        UPDATE subscription_request_usage SET status = 'released', updated_at = ?
+        WHERE id = ? AND status = 'reserved'
+      `).run(Math.floor(Date.now() / 1000), reservationId);
+      return result.changes > 0;
+    }
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const reservation = this.db.prepare(`
@@ -398,7 +468,34 @@ export class BotDatabase {
     for (const row of rows) {
       if (this.releaseRequest(row.id)) recovered += 1;
     }
+    const subscriptionRows = this.db.prepare(
+      "SELECT id FROM subscription_request_usage WHERE status = 'reserved'",
+    ).all() as Array<{ id: string }>;
+    for (const row of subscriptionRows) {
+      if (this.releaseRequest(row.id)) recovered += 1;
+    }
     return recovered;
+  }
+
+  getSubscriptionRequestAllowance(
+    telegramId: number,
+    limit: number,
+    windowSeconds = 30 * 24 * 60 * 60,
+    now = Math.floor(Date.now() / 1000),
+  ): SubscriptionRequestAllowance {
+    const access = this.getSubscriptionAccess(telegramId, now);
+    if (!access.active) return { active: false, used: 0, limit, remaining: 0 };
+    const usage = this.db.prepare(`
+      SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM subscription_request_usage
+      WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
+    `).get(telegramId, now - windowSeconds) as { used: number; oldest: number | null };
+    return {
+      active: true,
+      used: usage.used,
+      limit,
+      remaining: Math.max(0, limit - usage.used),
+      resetAt: usage.used >= limit ? (usage.oldest ?? now) + windowSeconds : undefined,
+    };
   }
 
   getSubscriptionAccess(telegramId: number, now = Math.floor(Date.now() / 1000)): SubscriptionAccess {

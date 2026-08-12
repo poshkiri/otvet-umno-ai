@@ -206,6 +206,32 @@ test("Plus subscription activates idempotently and can disable renewal", () => {
   db.close();
 });
 
+test("Plus request allowance is monthly, atomic and restores failed requests", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 0, 2);
+  const id = 5050;
+  const now = 1_800_000_000;
+  db.ensureUser(id);
+  db.recordSubscriptionPayment(
+    id,
+    299,
+    "subscription-v1:plus:5050",
+    "sub-5050",
+    now + 2_592_000,
+  );
+
+  const first = db.reserveRequest(id, 2_592_000, now);
+  assert.ok(first);
+  assert.equal(db.releaseRequest(first.id), true);
+  assert.equal(db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now).remaining, 2);
+
+  assert.ok(db.reserveRequest(id, 2_592_000, now));
+  assert.ok(db.reserveRequest(id, 2_592_000, now + 1));
+  assert.equal(db.reserveRequest(id, 2_592_000, now + 2), undefined);
+  assert.equal(db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now + 2).remaining, 0);
+  db.close();
+});
+
 test("image limits protect free trial, Plus rolling quota and failed requests", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 5);

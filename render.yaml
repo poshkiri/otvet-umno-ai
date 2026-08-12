@@ -32,14 +32,20 @@ services:
         value: "1264985917"
       - key: PLUS_SUBSCRIPTION_STARS
         value: "299"
+      - key: PLUS_REQUEST_LIMIT
+        value: "50"
       - key: PLUS_IMAGE_LIMIT
         value: "20"
       - key: PRO_IMAGE_LIMIT
-        value: "20"
+        value: "2000"
       - key: GLOBAL_IMAGE_LIMIT
-        value: "100"
+        value: "2000"
       - key: IMAGE_WINDOW_HOURS
-        value: "24"
+        value: "720"
+      - key: MAX_OUTPUT_TOKENS
+        value: "1000"
+      - key: MAX_VOICE_SECONDS
+        value: "180"
       - key: POSTHOG_HOST
         value: https://eu.i.posthog.com
       - key: REPORT_TIMEZONE
