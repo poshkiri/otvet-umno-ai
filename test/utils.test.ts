@@ -41,3 +41,9 @@ test("cleanTelegramText removes visible markdown decoration", () => {
     "📷 Что на фото\nЭто товар с этикеткой.",
   );
 });
+
+test("Telegram text replaces broken Unicode surrogate characters", () => {
+  const broken = `Начало ${String.fromCharCode(0xD83D)} конец`;
+  assert.equal(cleanTelegramText(broken), "Начало � конец");
+  assert.equal(splitLongMessage(broken)[0], "Начало � конец");
+});

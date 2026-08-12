@@ -1,5 +1,5 @@
 export function splitLongMessage(text: string, maxLength = 3900): string[] {
-  const normalized = text.trim();
+  const normalized = wellFormedText(text).trim();
   if (normalized.length <= maxLength) return [normalized];
 
   const chunks: string[] = [];
@@ -22,9 +22,17 @@ export function displayName(firstName?: string): string {
 }
 
 export function cleanTelegramText(text: string): string {
-  return text
+  return wellFormedText(text)
     .replace(/\*\*/g, "")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .trim();
+}
+
+function wellFormedText(text: string): string {
+  return Array.from(text, (character) => {
+    if (character.length > 1) return character;
+    const code = character.charCodeAt(0);
+    return code >= 0xD800 && code <= 0xDFFF ? "�" : character;
+  }).join("");
 }
