@@ -20,6 +20,9 @@ test("tariffs return directly to the main menu", () => {
   assert.deepEqual(tariffsMenu().inline_keyboard.at(-1), [
     { text: "← В меню", callback_data: "menu:main" },
   ]);
+  assert.deepEqual(tariffsMenu().inline_keyboard[2], [
+    { text: "50 запросов · 149 ⭐", callback_data: "buy:start" },
+  ]);
 });
 
 test("visual result keeps only the new photo action", () => {

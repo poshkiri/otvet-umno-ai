@@ -59,9 +59,9 @@ export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
     .text("⭐ Оформить Plus", "subscribe:plus").row()
     .text("❓ Как купить Stars", "stars:help").row()
-    .text(`Старт · ${CREDIT_PACKAGES.start.stars} ⭐`, "buy:start").row()
-    .text(`Плюс · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
-    .text(`Про · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
+    .text(`${CREDIT_PACKAGES.start.credits} запросов · ${CREDIT_PACKAGES.start.stars} ⭐`, "buy:start").row()
+    .text(`${CREDIT_PACKAGES.plus.credits} запросов · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
+    .text(`${CREDIT_PACKAGES.pro.credits} запросов · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
     .text("🧾 Мои покупки", "menu:payments").row()
     .text("← В меню", "menu:main");
 }

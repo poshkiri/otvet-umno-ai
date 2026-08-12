@@ -474,24 +474,30 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "⭐ Plus и запросы",
+        "⭐ Тариф Plus",
         "",
         subscription.active
-          ? `Plus активен до ${formatUnixDate(subscription.periodEnd!)}${subscription.autoRenew ? " · автопродление включено" : " · автопродление выключено"}`
-          : `Plus — ${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней за ${config.PLUS_SUBSCRIPTION_STARS} Stars`,
+          ? `Активен до ${formatUnixDate(subscription.periodEnd!)}`
+          : `${config.PLUS_SUBSCRIPTION_STARS} ⭐ на 30 дней`,
+        `Включено: ${config.PLUS_REQUEST_LIMIT} AI-баллов и до ${config.PLUS_IMAGE_LIMIT} картинок.`,
         ...(subscriptionRequests.active
-          ? [`Осталось AI-единиц Plus: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit}`]
+          ? [`Осталось: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit} AI-баллов.`]
           : []),
-        "Ответ — 1 · картинка — 2 · изменение фото — 3 AI-запроса",
         "",
-        "Разовые пакеты для ответов и разбора фото:",
-        `Старт — ${CREDIT_PACKAGES.start.credits} запросов за ${CREDIT_PACKAGES.start.stars} Stars`,
-        `Плюс — ${CREDIT_PACKAGES.plus.credits} запросов за ${CREDIT_PACKAGES.plus.stars} Stars`,
-        `Про — ${CREDIT_PACKAGES.pro.credits} запросов за ${CREDIT_PACKAGES.pro.stars} Stars`,
+        "Как списываются баллы:",
+        "Вопрос, разбор фото или голос — 1",
+        "Создание картинки — 2",
+        "Изменение фотографии — 3",
         "",
-        balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        "Дополнительные запросы без срока действия:",
+        `${CREDIT_PACKAGES.start.credits} запросов — ${CREDIT_PACKAGES.start.stars} ⭐`,
+        `${CREDIT_PACKAGES.plus.credits} запросов — ${CREDIT_PACKAGES.plus.stars} ⭐`,
+        `${CREDIT_PACKAGES.pro.credits} запросов — ${CREDIT_PACKAGES.pro.stars} ⭐`,
         "",
-        "Разовые запросы не сгорают. Plus продлевается каждые 30 дней, отменить можно здесь.",
+        userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        ...(subscription.active
+          ? [`Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}.`]
+          : ["Подписка продлевается автоматически. Её можно отключить здесь."]),
       ].join("\n"),
       subscription.active
         ? subscriptionMenu(subscription.autoRenew)
@@ -1282,6 +1288,14 @@ async function handleError(ctx: BotContext, error: unknown): Promise<void> {
 function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
   if (plan === "pro") return "Тариф: безлимит";
   return `Бесплатно осталось: ${Math.max(0, freeLimit - freeUsed)}\nКупленных запросов: ${credits}`;
+}
+
+function userTariffStatus(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
+  if (plan === "pro") return "Ваш доступ: команда бота, без ограничений.";
+  return [
+    `Бесплатных запросов: ${Math.max(0, freeLimit - freeUsed)}`,
+    `Купленных запросов: ${credits}`,
+  ].join("\n");
 }
 
 async function editOrReplyMenu(
