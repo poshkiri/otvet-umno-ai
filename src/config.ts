@@ -20,9 +20,9 @@ const schema = z.object({
   ADMIN_TELEGRAM_ID: z.coerce.number().int().positive().optional(),
   UNLIMITED_TELEGRAM_IDS: telegramIds.default([]),
   PLUS_SUBSCRIPTION_STARS: z.coerce.number().int().positive().default(299),
-  PLUS_IMAGE_LIMIT: z.coerce.number().int().positive().default(5),
+  PLUS_IMAGE_LIMIT: z.coerce.number().int().positive().default(20),
   PRO_IMAGE_LIMIT: z.coerce.number().int().positive().default(20),
-  GLOBAL_IMAGE_LIMIT: z.coerce.number().int().positive().default(30),
+  GLOBAL_IMAGE_LIMIT: z.coerce.number().int().positive().default(100),
   IMAGE_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   POSTHOG_API_KEY: z.preprocess(
     (value) => value === "" ? undefined : value,

@@ -33,11 +33,11 @@ services:
       - key: PLUS_SUBSCRIPTION_STARS
         value: "299"
       - key: PLUS_IMAGE_LIMIT
-        value: "5"
+        value: "20"
       - key: PRO_IMAGE_LIMIT
         value: "20"
       - key: GLOBAL_IMAGE_LIMIT
-        value: "30"
+        value: "100"
       - key: IMAGE_WINDOW_HOURS
         value: "24"
       - key: POSTHOG_HOST
