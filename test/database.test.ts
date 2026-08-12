@@ -98,3 +98,36 @@ test("action cooldown suppresses repeated start events", () => {
   assert.equal(db.claimAction(777, "another-action", 8), true);
   db.close();
 });
+
+test("request reservation atomically prevents overspending and can be released", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 0);
+  const id = 2001;
+  db.ensureUser(id);
+  db.addCredits(id, 1);
+
+  const first = db.reserveRequest(id);
+  assert.ok(first);
+  assert.equal(db.reserveRequest(id), undefined);
+  assert.equal(db.getAccess(id).credits, 0);
+  assert.equal(db.releaseRequest(first.id), true);
+  assert.equal(db.releaseRequest(first.id), false);
+  assert.equal(db.getAccess(id).credits, 1);
+  db.close();
+});
+
+test("startup recovery returns unfinished reservations", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const path = join(directory, "test.db");
+  const id = 2002;
+  const firstProcess = new BotDatabase(path, 1);
+  firstProcess.ensureUser(id);
+  assert.ok(firstProcess.reserveRequest(id));
+  assert.equal(firstProcess.getAccess(id).freeUsed, 1);
+  firstProcess.close();
+
+  const restartedProcess = new BotDatabase(path, 1);
+  assert.equal(restartedProcess.recoverReservedRequests(), 1);
+  assert.equal(restartedProcess.getAccess(id).freeUsed, 0);
+  restartedProcess.close();
+});

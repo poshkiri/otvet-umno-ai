@@ -1,4 +1,5 @@
 import { Bot, Context, InlineKeyboard, InputFile, session, type SessionFlavor } from "grammy";
+import { sequentialize } from "@grammyjs/runner";
 import type { AppConfig } from "./config.js";
 import { AiService } from "./ai.js";
 import { BotDatabase } from "./database.js";
@@ -30,19 +31,32 @@ import {
   type RefinementId,
 } from "./types.js";
 import { cleanTelegramText, displayName, splitLongMessage } from "./utils.js";
+import { Semaphore } from "./semaphore.js";
 
 type BotContext = Context & SessionFlavor<BotSession>;
 
 interface VisualMessageItem {
   fileId: string;
+  fileSize: number | undefined;
   mimeType: string;
   caption: string | undefined;
 }
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_VOICE_BYTES = 10 * 1024 * 1024;
+const MAX_ALBUM_IMAGES = 6;
+const MAX_ALBUM_BYTES = 16 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 20_000;
 
 interface PendingAlbum {
   ctx: BotContext;
   items: VisualMessageItem[];
   timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+export interface BotRuntime {
+  bot: Bot<BotContext>;
+  drainBackgroundTasks: () => Promise<void>;
 }
 
 const INPUT_HINTS: Record<FlowId, string> = {
@@ -67,9 +81,86 @@ function isRefinementId(value: string): value is RefinementId {
   return (refinementIds as readonly string[]).includes(value);
 }
 
-export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bot<BotContext> {
+export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): BotRuntime {
   const bot = new Bot<BotContext>(config.BOT_TOKEN);
   const pendingAlbums = new Map<string, PendingAlbum>();
+  const backgroundTasks = new Set<Promise<void>>();
+  const resourceLimiter = new Semaphore(2);
+
+  const trackBackgroundTask = (task: Promise<void>): void => {
+    const guarded = task.catch((error) => console.error("Background album error", error));
+    backgroundTasks.add(guarded);
+    void guarded.then(() => backgroundTasks.delete(guarded));
+  };
+
+  bot.use(async (ctx, next) => {
+    if (ctx.preCheckoutQuery) {
+      const query = ctx.preCheckoutQuery;
+      const parsed = parsePaymentPayload(query.invoice_payload);
+      const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+      const valid = Boolean(
+        parsed
+        && selected
+        && parsed.telegramId === query.from.id
+        && query.currency === "XTR"
+        && query.total_amount === selected.stars,
+      );
+      await ctx.answerPreCheckoutQuery(
+        valid,
+        valid ? undefined : {
+          error_message: "Счёт устарел или повреждён. Вернись в тарифы и создай новый.",
+        },
+      );
+      return;
+    }
+
+    const payment = ctx.message?.successful_payment;
+    if (!payment || !ctx.from) {
+      await next();
+      return;
+    }
+    db.ensureUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const parsed = parsePaymentPayload(payment.invoice_payload);
+    const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+    if (
+      !parsed
+      || !selected
+      || parsed.telegramId !== ctx.from.id
+      || payment.currency !== "XTR"
+      || payment.total_amount !== selected.stars
+    ) {
+      console.error("Invalid successful payment", {
+        telegramId: ctx.from.id,
+        payload: payment.invoice_payload,
+        amount: payment.total_amount,
+      });
+      await ctx.reply(
+        "Платёж получен, но пакет не удалось определить. Напиши /paysupport — мы проверим вручную.",
+      );
+      return;
+    }
+    const credited = db.recordPayment(
+      ctx.from.id,
+      parsed.packageId,
+      selected.credits,
+      selected.stars,
+      payment.invoice_payload,
+      payment.telegram_payment_charge_id,
+    );
+    if (!credited) {
+      await ctx.reply("Этот платёж уже был обработан. Повторно запросы не начислялись.");
+      return;
+    }
+    const access = db.getAccess(ctx.from.id);
+    await ctx.reply(
+      `Оплата прошла ✅\n\nНачислено: ${selected.credits} запросов\nТеперь доступно: ${access.credits} купленных запросов\n\nСпасибо! Можешь сразу отправлять фото или скриншот.`,
+      { reply_markup: mainMenu() },
+    );
+  });
+
+  bot.use(sequentialize((ctx) => {
+    return ctx.from ? `user:${ctx.from.id}` : ctx.chat ? `chat:${ctx.chat.id}` : undefined;
+  }));
 
   bot.use(session({ initial: (): BotSession => ({ awaitingInput: false }) }));
 
@@ -245,61 +336,6 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     });
   });
 
-  bot.on("pre_checkout_query", async (ctx) => {
-    const query = ctx.preCheckoutQuery;
-    const parsed = parsePaymentPayload(query.invoice_payload);
-    const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
-    const valid = Boolean(
-      parsed
-      && selected
-      && parsed.telegramId === query.from.id
-      && query.currency === "XTR"
-      && query.total_amount === selected.stars,
-    );
-    await ctx.answerPreCheckoutQuery(
-      valid,
-      valid ? undefined : { error_message: "Счёт устарел или повреждён. Вернись в тарифы и создай новый." },
-    );
-  });
-
-  bot.on("message:successful_payment", async (ctx) => {
-    const payment = ctx.message.successful_payment;
-    const parsed = parsePaymentPayload(payment.invoice_payload);
-    const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
-    if (
-      !parsed
-      || !selected
-      || parsed.telegramId !== ctx.from.id
-      || payment.currency !== "XTR"
-      || payment.total_amount !== selected.stars
-    ) {
-      console.error("Invalid successful payment", {
-        telegramId: ctx.from.id,
-        payload: payment.invoice_payload,
-        amount: payment.total_amount,
-      });
-      await ctx.reply("Платёж получен, но пакет не удалось определить. Напиши /paysupport — мы проверим вручную.");
-      return;
-    }
-    const credited = db.recordPayment(
-      ctx.from.id,
-      parsed.packageId,
-      selected.credits,
-      selected.stars,
-      payment.invoice_payload,
-      payment.telegram_payment_charge_id,
-    );
-    if (!credited) {
-      await ctx.reply("Этот платёж уже был обработан. Повторно запросы не списывались и не начислялись.");
-      return;
-    }
-    const access = db.getAccess(ctx.from.id);
-    await ctx.reply(
-      `Оплата прошла ✅\n\nНачислено: ${selected.credits} запросов\nТеперь доступно: ${access.credits} купленных запросов\n\nСпасибо! Можешь сразу отправлять фото или скриншот.`,
-      { reply_markup: mainMenu() },
-    );
-  });
-
   bot.callbackQuery("menu:profile", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Твои ответы, лимит и тариф:", { reply_markup: profileMenu() });
@@ -373,21 +409,22 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       await ctx.answerCallbackQuery("Сначала создай ответ");
       return;
     }
-    const access = db.getAccess(ctx.from.id);
-    if (!access.allowed) {
+    const reservation = db.reserveRequest(ctx.from.id);
+    if (!reservation) {
       await ctx.answerCallbackQuery("Лимит закончился");
       await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", { reply_markup: mainMenu() });
       return;
     }
     await ctx.answerCallbackQuery("Переделываю…");
-    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     try {
+      await ctx.api.sendChatAction(ctx.chat!.id, "typing");
       const result = await ai.refine(refinement, ctx.session.lastSource, ctx.session.lastResult);
-      db.consumeRequest(ctx.from.id);
       db.saveGeneration(ctx.from.id, ctx.session.flow, ctx.session.category, ctx.session.lastSource, result);
+      db.commitRequest(reservation.id);
       ctx.session.lastResult = result;
       await replyResult(ctx, result);
     } catch (error) {
+      db.releaseRequest(reservation.id);
       await handleError(ctx, error);
     }
   });
@@ -419,24 +456,31 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     }
     const item: VisualMessageItem = {
       fileId: photo.file_id,
+      fileSize: photo.file_size,
       mimeType: "image/jpeg",
       caption: ctx.message.caption,
     };
     const mediaGroupId = ctx.message.media_group_id;
     if (!mediaGroupId) {
-      await processVisualItems(ctx, [item], config, db, ai);
+      await processVisualItems(ctx, [item], config, db, ai, resourceLimiter);
       return;
     }
 
     const key = `${ctx.chat.id}:${mediaGroupId}`;
     const album = pendingAlbums.get(key) ?? { ctx, items: [], timer: undefined };
+    if (album.items.length >= MAX_ALBUM_IMAGES) {
+      await ctx.reply(`За один раз можно отправить не больше ${MAX_ALBUM_IMAGES} изображений.`);
+      return;
+    }
     album.items.push(item);
     if (album.timer) clearTimeout(album.timer);
     album.timer = setTimeout(() => {
       const readyAlbum = pendingAlbums.get(key);
       if (!readyAlbum) return;
       pendingAlbums.delete(key);
-      void processVisualItems(readyAlbum.ctx, readyAlbum.items, config, db, ai);
+      trackBackgroundTask(
+        processVisualItems(readyAlbum.ctx, readyAlbum.items, config, db, ai, resourceLimiter),
+      );
     }, 900);
     pendingAlbums.set(key, album);
   });
@@ -447,11 +491,16 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       await next();
       return;
     }
+    if ((ctx.message.document.file_size ?? 0) > MAX_IMAGE_BYTES) {
+      await ctx.reply("Изображение слишком большое. Максимальный размер — 8 МБ.");
+      return;
+    }
     await processVisualItems(ctx, [{
       fileId: ctx.message.document.file_id,
+      fileSize: ctx.message.document.file_size,
       mimeType,
       caption: ctx.message.caption,
-    }], config, db, ai);
+    }], config, db, ai, resourceLimiter);
   });
 
   bot.on("message:voice", async (ctx) => {
@@ -459,17 +508,28 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       await ctx.reply("Сначала выбери задачу в меню.", { reply_markup: mainMenu() });
       return;
     }
-    if (!checkAccess(ctx, db)) return;
-    await ctx.api.sendChatAction(ctx.chat.id, "typing");
+    if ((ctx.message.voice.file_size ?? 0) > MAX_VOICE_BYTES) {
+      await ctx.reply("Голосовое сообщение слишком большое. Максимальный размер — 10 МБ.");
+      return;
+    }
+    const reservation = await reserveForUser(ctx, db);
+    if (!reservation) return;
     try {
-      const audio = await downloadTelegramFile(ctx, config.BOT_TOKEN, ctx.message.voice.file_id);
-      const transcript = await ai.transcribe(audio, "voice.ogg");
-      if (!transcript) throw new Error("Не удалось распознать голос");
-      const result = await ai.generate(ctx.session.flow!, ctx.session.category!, transcript);
-      finishGeneration(ctx, db, transcript, result);
+      await ctx.api.sendChatAction(ctx.chat.id, "typing");
+      const { transcript, result } = await resourceLimiter.run(async () => {
+        const audio = await downloadTelegramFile(
+          ctx, config.BOT_TOKEN, ctx.message.voice.file_id, MAX_VOICE_BYTES,
+        );
+        const transcript = await ai.transcribe(audio, "voice.ogg");
+        if (!transcript) throw new Error("Не удалось распознать голос");
+        const result = await ai.generate(ctx.session.flow!, ctx.session.category!, transcript);
+        return { transcript, result };
+      });
+      finishGeneration(ctx, db, transcript, result, reservation);
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
     } catch (error) {
+      db.releaseRequest(reservation);
       await handleError(ctx, error);
     }
   });
@@ -483,7 +543,20 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     }
   });
 
-  return bot;
+  const drainBackgroundTasks = async (): Promise<void> => {
+    for (const [key, album] of pendingAlbums) {
+      if (album.timer) clearTimeout(album.timer);
+      pendingAlbums.delete(key);
+      trackBackgroundTask(
+        processVisualItems(album.ctx, album.items, config, db, ai, resourceLimiter),
+      );
+    }
+    while (backgroundTasks.size > 0) {
+      await Promise.allSettled([...backgroundTasks]);
+    }
+  };
+
+  return { bot, drainBackgroundTasks };
 }
 
 async function beginInput(ctx: BotContext, flow: FlowId, category: CategoryId): Promise<void> {
@@ -501,30 +574,38 @@ function readyForInput(ctx: BotContext): boolean {
   return Boolean(ctx.session.awaitingInput && ctx.session.flow && ctx.session.category);
 }
 
-function checkAccess(ctx: BotContext, db: BotDatabase): boolean {
-  const access = db.getAccess(ctx.from!.id);
-  if (access.allowed) return true;
-  void ctx.reply("Бесплатные запросы закончились. Открой тарифы или напиши владельцу бота.", {
+async function reserveForUser(ctx: BotContext, db: BotDatabase): Promise<string | undefined> {
+  const reservation = db.reserveRequest(ctx.from!.id);
+  if (reservation) return reservation.id;
+  await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", {
     reply_markup: mainMenu(),
   });
-  return false;
+  return undefined;
 }
 
 async function generateForUser(ctx: BotContext, db: BotDatabase, ai: AiService, source: string): Promise<void> {
-  if (!checkAccess(ctx, db)) return;
-  await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+  const reservation = await reserveForUser(ctx, db);
+  if (!reservation) return;
   try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     const result = await ai.generate(ctx.session.flow!, ctx.session.category!, source);
-    finishGeneration(ctx, db, source, result);
+    finishGeneration(ctx, db, source, result, reservation);
     await replyResult(ctx, result);
   } catch (error) {
+    db.releaseRequest(reservation);
     await handleError(ctx, error);
   }
 }
 
-function finishGeneration(ctx: BotContext, db: BotDatabase, source: string, result: string): void {
-  db.consumeRequest(ctx.from!.id);
+function finishGeneration(
+  ctx: BotContext,
+  db: BotDatabase,
+  source: string,
+  result: string,
+  reservationId: string,
+): void {
   db.saveGeneration(ctx.from!.id, ctx.session.flow!, ctx.session.category!, source, result);
+  db.commitRequest(reservationId);
   ctx.session.lastSource = source;
   ctx.session.lastResult = result;
   ctx.session.awaitingInput = false;
@@ -537,26 +618,47 @@ async function processVisualItems(
   config: AppConfig,
   db: BotDatabase,
   ai: AiService,
+  resourceLimiter: Semaphore,
 ): Promise<void> {
-  if (!checkAccess(ctx, db)) return;
-  await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+  if (items.length > MAX_ALBUM_IMAGES) {
+    await ctx.reply(`За один раз можно отправить не больше ${MAX_ALBUM_IMAGES} изображений.`);
+    return;
+  }
+  if (items.some((item) => (item.fileSize ?? 0) > MAX_IMAGE_BYTES)) {
+    await ctx.reply("Одно из изображений больше 8 МБ. Уменьши размер и попробуй снова.");
+    return;
+  }
+  const reservation = await reserveForUser(ctx, db);
+  if (!reservation) return;
   try {
-    const images = await Promise.all(items.map(async (item) => ({
-      data: await downloadTelegramFile(ctx, config.BOT_TOKEN, item.fileId),
-      mimeType: item.mimeType,
-    })));
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     const caption = items.find((item) => item.caption?.trim())?.caption;
-    const visual = await ai.generateFromImages(images, caption);
+    const visual = await resourceLimiter.run(async () => {
+      const images: Array<{ data: Uint8Array; mimeType: string }> = [];
+      let totalBytes = 0;
+      for (const item of items) {
+        const data = await downloadTelegramFile(
+          ctx, config.BOT_TOKEN, item.fileId, MAX_IMAGE_BYTES,
+        );
+        totalBytes += data.byteLength;
+        if (totalBytes > MAX_ALBUM_BYTES) {
+          throw new Error("Суммарный размер изображений превышает 16 МБ");
+        }
+        images.push({ data, mimeType: item.mimeType });
+      }
+      return ai.generateFromImages(images, caption);
+    });
     const cleanResult = cleanTelegramText(visual.text);
     ctx.session.flow = "analyze";
     ctx.session.category = "auto";
     const source = caption || (items.length > 1
       ? `Альбом из ${items.length} изображений`
       : "Фотография или скриншот пользователя");
-    finishGeneration(ctx, db, source, cleanResult);
+    finishGeneration(ctx, db, source, cleanResult, reservation);
     ctx.session.visualResponseId = visual.responseId;
     await replyVisualResult(ctx, cleanResult);
   } catch (error) {
+    db.releaseRequest(reservation);
     await handleError(ctx, error);
   }
 }
@@ -567,18 +669,21 @@ async function continueVisualConversation(
   ai: AiService,
   question: string,
 ): Promise<void> {
-  if (!checkAccess(ctx, db) || !ctx.session.visualResponseId) return;
-  await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+  if (!ctx.session.visualResponseId) return;
+  const reservation = await reserveForUser(ctx, db);
+  if (!reservation) return;
   try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     const visual = await ai.continueVisual(ctx.session.visualResponseId, question);
     const cleanResult = cleanTelegramText(visual.text);
-    db.consumeRequest(ctx.from!.id);
     db.saveGeneration(ctx.from!.id, "analyze", "auto", question, cleanResult);
+    db.commitRequest(reservation);
     ctx.session.lastSource = question;
     ctx.session.lastResult = cleanResult;
     ctx.session.visualResponseId = visual.responseId;
     await replyVisualResult(ctx, cleanResult);
   } catch (error) {
+    db.releaseRequest(reservation);
     await handleError(ctx, error);
   }
 }
@@ -606,12 +711,24 @@ async function replyChunks(ctx: BotContext, text: string): Promise<void> {
   await ctx.reply("Что дальше?", { reply_markup: mainMenu() });
 }
 
-async function downloadTelegramFile(ctx: BotContext, token: string, fileId: string): Promise<Uint8Array> {
+async function downloadTelegramFile(
+  ctx: BotContext,
+  token: string,
+  fileId: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
   const file = await ctx.api.getFile(fileId);
   if (!file.file_path) throw new Error("Telegram не вернул путь к файлу");
-  const response = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
+  if ((file.file_size ?? 0) > maxBytes) throw new Error("Файл превышает допустимый размер");
+  const response = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`, {
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error(`Не удалось скачать файл: ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  if (contentLength > maxBytes) throw new Error("Файл превышает допустимый размер");
+  const data = new Uint8Array(await response.arrayBuffer());
+  if (data.byteLength > maxBytes) throw new Error("Файл превышает допустимый размер");
+  return data;
 }
 
 async function handleError(ctx: BotContext, error: unknown): Promise<void> {

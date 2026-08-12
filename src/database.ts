@@ -1,7 +1,15 @@
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CategoryId, FlowId, GenerationRecord, PaymentRecord, UserAccess } from "./types.js";
+import type {
+  CategoryId,
+  FlowId,
+  GenerationRecord,
+  PaymentRecord,
+  RequestReservation,
+  UserAccess,
+} from "./types.js";
 
 export class BotDatabase {
   private readonly db: DatabaseSync;
@@ -73,6 +81,25 @@ export class BotDatabase {
         PRIMARY KEY (telegram_id, action)
       );
 
+      CREATE TABLE IF NOT EXISTS request_reservations (
+        id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('pro', 'free', 'credits')),
+        payment_charge_id TEXT,
+        status TEXT NOT NULL DEFAULT 'reserved'
+          CHECK (status IN ('reserved', 'consumed', 'released')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
+        FOREIGN KEY (payment_charge_id) REFERENCES payments(telegram_payment_charge_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -114,6 +141,23 @@ export class BotDatabase {
     return result.changes > 0;
   }
 
+  getStateInt(key: string, fallback = 0): number {
+    const row = this.db.prepare("SELECT value FROM app_state WHERE key = ?").get(key) as {
+      value: string;
+    } | undefined;
+    if (!row) return fallback;
+    const value = Number(row.value);
+    return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+  }
+
+  setStateInt(key: string, value: number): void {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error("State value must be non-negative");
+    this.db.prepare(`
+      INSERT INTO app_state (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(key, String(value));
+  }
+
   getAccess(telegramId: number): UserAccess {
     const row = this.db.prepare(
       "SELECT free_used, credits, plan FROM users WHERE telegram_id = ?",
@@ -132,29 +176,131 @@ export class BotDatabase {
   }
 
   consumeRequest(telegramId: number): UserAccess {
-    const access = this.getAccess(telegramId);
-    if (!access.allowed) return access;
+    const reservation = this.reserveRequest(telegramId);
+    if (reservation) this.commitRequest(reservation.id);
+    return this.getAccess(telegramId);
+  }
 
-    if (access.plan !== "pro") {
-      if (access.freeUsed < access.freeLimit) {
+  reserveRequest(telegramId: number): RequestReservation | undefined {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.db.prepare(
+        "SELECT free_used, credits, plan FROM users WHERE telegram_id = ?",
+      ).get(telegramId) as { free_used: number; credits: number; plan: string } | undefined;
+      if (!row) {
+        this.db.exec("ROLLBACK");
+        return undefined;
+      }
+
+      let source: "pro" | "free" | "credits";
+      let paymentChargeId: string | null = null;
+      if (row.plan === "pro") {
+        source = "pro";
+      } else if (row.free_used < this.freeLimit) {
+        source = "free";
         this.db.prepare(
           "UPDATE users SET free_used = free_used + 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
         ).run(telegramId);
-      } else {
+      } else if (row.credits > 0) {
+        source = "credits";
+        const payment = this.db.prepare(`
+          SELECT telegram_payment_charge_id FROM payments
+          WHERE telegram_id = ? AND status = 'paid' AND remaining_credits > 0
+          ORDER BY created_at, rowid LIMIT 1
+        `).get(telegramId) as { telegram_payment_charge_id: string } | undefined;
+        paymentChargeId = payment?.telegram_payment_charge_id ?? null;
         this.db.prepare(
-          "UPDATE users SET credits = credits - 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+          "UPDATE users SET credits = credits - 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ? AND credits > 0",
         ).run(telegramId);
-        this.db.prepare(`
-          UPDATE payments SET remaining_credits = remaining_credits - 1
-          WHERE telegram_payment_charge_id = (
-            SELECT telegram_payment_charge_id FROM payments
-            WHERE telegram_id = ? AND status = 'paid' AND remaining_credits > 0
-            ORDER BY created_at, rowid LIMIT 1
-          )
-        `).run(telegramId);
+        if (paymentChargeId) {
+          this.db.prepare(`
+            UPDATE payments SET remaining_credits = remaining_credits - 1
+            WHERE telegram_payment_charge_id = ? AND remaining_credits > 0
+          `).run(paymentChargeId);
+        }
+      } else {
+        this.db.exec("ROLLBACK");
+        return undefined;
       }
+
+      const id = randomUUID();
+      this.db.prepare(`
+        INSERT INTO request_reservations (id, telegram_id, source, payment_charge_id)
+        VALUES (?, ?, ?, ?)
+      `).run(id, telegramId, source, paymentChargeId);
+      this.db.exec("COMMIT");
+      return { id };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
-    return this.getAccess(telegramId);
+  }
+
+  commitRequest(reservationId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE request_reservations SET status = 'consumed', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'reserved'
+    `).run(reservationId);
+    return result.changes > 0;
+  }
+
+  releaseRequest(reservationId: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const reservation = this.db.prepare(`
+        SELECT telegram_id, source, payment_charge_id FROM request_reservations
+        WHERE id = ? AND status = 'reserved'
+      `).get(reservationId) as {
+        telegram_id: number;
+        source: "pro" | "free" | "credits";
+        payment_charge_id: string | null;
+      } | undefined;
+      if (!reservation) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        UPDATE request_reservations SET status = 'released', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'reserved'
+      `).run(reservationId);
+      if (reservation.source === "free") {
+        this.db.prepare(`
+          UPDATE users SET free_used = MAX(0, free_used - 1), updated_at = CURRENT_TIMESTAMP
+          WHERE telegram_id = ?
+        `).run(reservation.telegram_id);
+      } else if (reservation.source === "credits") {
+        let restoreCredit = true;
+        if (reservation.payment_charge_id) {
+          const result = this.db.prepare(`
+            UPDATE payments SET remaining_credits = remaining_credits + 1
+            WHERE telegram_payment_charge_id = ? AND status = 'paid'
+          `).run(reservation.payment_charge_id);
+          restoreCredit = result.changes > 0;
+        }
+        if (restoreCredit) {
+          this.db.prepare(`
+            UPDATE users SET credits = credits + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+          `).run(reservation.telegram_id);
+        }
+      }
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recoverReservedRequests(): number {
+    const rows = this.db.prepare(
+      "SELECT id FROM request_reservations WHERE status = 'reserved'",
+    ).all() as Array<{ id: string }>;
+    let recovered = 0;
+    for (const row of rows) {
+      if (this.releaseRequest(row.id)) recovered += 1;
+    }
+    return recovered;
   }
 
   addCredits(telegramId: number, amount: number): void {

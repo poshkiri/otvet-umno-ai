@@ -7,6 +7,7 @@ import {
   VISION_SYSTEM_PROMPT,
 } from "./prompts.js";
 import type { CategoryId, FlowId, RefinementId } from "./types.js";
+import { Semaphore } from "./semaphore.js";
 
 export interface VisualInput {
   data: Uint8Array;
@@ -20,22 +21,25 @@ export interface VisualResponse {
 
 export class AiService {
   private readonly client: OpenAI;
+  private readonly limiter = new Semaphore(4);
 
   constructor(
     apiKey: string,
     private readonly model: string,
     private readonly transcribeModel: string,
   ) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 1 });
   }
 
   async generate(flow: FlowId, category: CategoryId, source: string): Promise<string> {
-    const response = await this.client.responses.create({
-      model: this.model,
-      instructions: SYSTEM_PROMPT,
-      input: buildGenerationPrompt(flow, category, source),
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: SYSTEM_PROMPT,
+        input: buildGenerationPrompt(flow, category, source),
+      });
+      return this.requireText(response.output_text);
     });
-    return this.requireText(response.output_text);
   }
 
   async generateFromImage(
@@ -64,44 +68,52 @@ export class AiService {
         detail: "auto",
       });
     }
-    const response = await this.client.responses.create({
-      model: this.model,
-      instructions: VISION_SYSTEM_PROMPT,
-      input: [{
-        role: "user",
-        content,
-      }],
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: VISION_SYSTEM_PROMPT,
+        input: [{
+          role: "user",
+          content,
+        }],
+      });
+      return { text: this.requireText(response.output_text), responseId: response.id };
     });
-    return { text: this.requireText(response.output_text), responseId: response.id };
   }
 
   async continueVisual(previousResponseId: string, question: string): Promise<VisualResponse> {
-    const response = await this.client.responses.create({
-      model: this.model,
-      instructions: VISION_FOLLOW_UP_PROMPT,
-      previous_response_id: previousResponseId,
-      input: question.trim(),
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: VISION_FOLLOW_UP_PROMPT,
+        previous_response_id: previousResponseId,
+        input: question.trim(),
+      });
+      return { text: this.requireText(response.output_text), responseId: response.id };
     });
-    return { text: this.requireText(response.output_text), responseId: response.id };
   }
 
   async transcribe(audio: Uint8Array, filename: string): Promise<string> {
-    const file = await toFile(audio, filename, { type: "audio/ogg" });
-    const transcription = await this.client.audio.transcriptions.create({
-      file,
-      model: this.transcribeModel,
-      language: "ru",
+    return this.limiter.run(async () => {
+      const file = await toFile(audio, filename, { type: "audio/ogg" });
+      const transcription = await this.client.audio.transcriptions.create({
+        file,
+        model: this.transcribeModel,
+        language: "ru",
+      });
+      return transcription.text.trim();
     });
-    return transcription.text.trim();
   }
 
   async refine(refinement: RefinementId, source: string, previousResult: string): Promise<string> {
-    const response = await this.client.responses.create({
-      model: this.model,
-      instructions: SYSTEM_PROMPT,
-      input: buildRefinementPrompt(refinement, source, previousResult),
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: SYSTEM_PROMPT,
+        input: buildRefinementPrompt(refinement, source, previousResult),
+      });
+      return this.requireText(response.output_text);
     });
-    return this.requireText(response.output_text);
   }
 
   private requireText(text: string): string {

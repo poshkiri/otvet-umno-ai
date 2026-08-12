@@ -71,6 +71,10 @@ export interface PaymentRecord {
   refundedAt?: string | undefined;
 }
 
+export interface RequestReservation {
+  id: string;
+}
+
 export const FLOW_LABELS: Record<FlowId, string> = {
   analyze: "Разбор переписки",
   compose: "Ответ с нуля",
