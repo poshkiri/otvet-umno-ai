@@ -29,6 +29,10 @@ test("vision prompt covers products, screenshots and uncertainty", () => {
   assert.match(VISION_SYSTEM_PROMPT, /Товар, упаковка или этикетка/);
   assert.match(VISION_SYSTEM_PROMPT, /Скриншот приложения/);
   assert.match(VISION_SYSTEM_PROMPT, /не выдумывай/);
+  assert.match(VISION_SYSTEM_PROMPT, /сначала прямо ответь, ЧТО/);
+  assert.match(VISION_SYSTEM_PROMPT, /не называй все ёмкости одним словом «флаконы»/);
+  assert.match(VISION_SYSTEM_PROMPT, /очищающее средство, тонер или лосьон, сыворотка или эссенция/);
+  assert.match(VISION_SYSTEM_PROMPT, /Если важных предупреждений нет, пропусти этот раздел/);
 });
 
 test("cleanTelegramText removes visible markdown decoration", () => {
