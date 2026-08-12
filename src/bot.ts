@@ -32,6 +32,13 @@ import {
 } from "./types.js";
 import { cleanTelegramText, displayName, splitLongMessage } from "./utils.js";
 import { Semaphore } from "./semaphore.js";
+import { ProductAnalytics, type AnalyticsProperties } from "./analytics.js";
+import {
+  formatAcquisitionReport,
+  formatBusinessReport,
+  getBotStarBalance,
+} from "./reporting.js";
+import type { AnalyticsPeriodDays } from "./types.js";
 
 type BotContext = Context & SessionFlavor<BotSession>;
 
@@ -53,6 +60,13 @@ interface PendingAlbum {
   items: VisualMessageItem[];
   timer: ReturnType<typeof setTimeout> | undefined;
 }
+
+type TrackEvent = (
+  telegramId: number,
+  event: string,
+  detail?: string,
+  properties?: AnalyticsProperties,
+) => void;
 
 export interface BotRuntime {
   bot: Bot<BotContext>;
@@ -81,11 +95,41 @@ function isRefinementId(value: string): value is RefinementId {
   return (refinementIds as readonly string[]).includes(value);
 }
 
-export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): BotRuntime {
+export function createBot(
+  config: AppConfig,
+  db: BotDatabase,
+  ai: AiService,
+  analytics: ProductAnalytics,
+): BotRuntime {
   const bot = new Bot<BotContext>(config.BOT_TOKEN);
   const pendingAlbums = new Map<string, PendingAlbum>();
   const backgroundTasks = new Set<Promise<void>>();
   const resourceLimiter = new Semaphore(2);
+  let lastAdminErrorAt = 0;
+
+  const track = (
+    telegramId: number,
+    event: string,
+    detail?: string,
+    properties: AnalyticsProperties = {},
+  ): void => {
+    db.recordEvent(telegramId, event, detail);
+    analytics.capture(telegramId, event, properties);
+  };
+
+  const notifyAdminError = async (label: string, error: unknown): Promise<void> => {
+    if (!config.ADMIN_TELEGRAM_ID || Date.now() - lastAdminErrorAt < 5 * 60 * 1_000) return;
+    lastAdminErrorAt = Date.now();
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      await bot.api.sendMessage(
+        config.ADMIN_TELEGRAM_ID,
+        `🚨 Ошибка бота\n\n${label}\n${message.slice(0, 700)}`,
+      );
+    } catch (notificationError) {
+      console.error("Admin error notification failed", notificationError);
+    }
+  };
 
   const trackBackgroundTask = (task: Promise<void>): void => {
     const guarded = task.catch((error) => console.error("Background album error", error));
@@ -105,6 +149,13 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
         && query.currency === "XTR"
         && query.total_amount === selected.stars,
       );
+      if (valid) {
+        db.ensureUser(query.from.id, query.from.username, query.from.first_name);
+        track(query.from.id, "checkout_confirmed", selected?.id, {
+          package_id: selected?.id,
+          stars: selected?.stars,
+        });
+      }
       await ctx.answerPreCheckoutQuery(
         valid,
         valid ? undefined : {
@@ -151,11 +202,22 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       await ctx.reply("Этот платёж уже был обработан. Повторно запросы не начислялись.");
       return;
     }
+    track(ctx.from.id, "purchase_completed", selected.id, {
+      package_id: selected.id,
+      credits: selected.credits,
+      stars: selected.stars,
+    });
     const access = db.getAccess(ctx.from.id);
     await ctx.reply(
       `Оплата прошла ✅\n\nНачислено: ${selected.credits} запросов\nТеперь доступно: ${access.credits} купленных запросов\n\nСпасибо! Можешь сразу отправлять фото или скриншот.`,
       { reply_markup: mainMenu() },
     );
+    if (config.ADMIN_TELEGRAM_ID) {
+      void ctx.api.sendMessage(
+        config.ADMIN_TELEGRAM_ID,
+        `💰 Новая оплата\nПакет: ${selected.title}\nПолучено: ${selected.stars} Stars\nНачислено: ${selected.credits} запросов\nПользователь: ${ctx.from.id}`,
+      ).catch((error) => console.error("Payment notification failed", error));
+    }
   });
 
   bot.use(sequentialize((ctx) => {
@@ -172,6 +234,9 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
   bot.use(async (ctx, next) => {
     if (ctx.from) {
       db.ensureUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      if (db.claimAction(ctx.from.id, "analytics-active", 60 * 60)) {
+        db.recordEvent(ctx.from.id, "user_active");
+      }
       if (ctx.from.id === config.ADMIN_TELEGRAM_ID) db.setPlan(ctx.from.id, "pro");
     }
     await next();
@@ -179,6 +244,9 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
 
   bot.command("start", async (ctx) => {
     if (!ctx.from || !db.claimAction(ctx.from.id, "start", 8)) return;
+    const source = sanitizeStartSource(ctx.match);
+    db.recordAcquisition(ctx.from.id, source);
+    track(ctx.from.id, "bot_started", source, { source });
     ctx.session = { awaitingInput: false };
     await ctx.replyWithPhoto(new InputFile("./assets/welcome-cover.png"), {
       caption: [
@@ -262,6 +330,10 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     try {
       await ctx.api.refundStarPayment(payment.telegramId, chargeId);
       db.markPaymentRefunded(chargeId);
+      track(payment.telegramId, "payment_refunded", payment.packageId, {
+        package_id: payment.packageId,
+        stars: payment.stars,
+      });
       await ctx.reply(`Возврат ${payment.stars} Stars выполнен пользователю ${payment.telegramId}.`);
     } catch (error) {
       console.error("Refund error", error);
@@ -269,12 +341,34 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     }
   });
 
-  bot.command("stats", async (ctx) => {
+  const showAdminReport = async (ctx: BotContext, periodDays: AnalyticsPeriodDays): Promise<void> => {
+    const balance = await getBotStarBalance(ctx.api);
+    await ctx.reply(formatBusinessReport(db.businessStats(periodDays), balance), {
+      reply_markup: adminKeyboard(periodDays),
+    });
+  };
+
+  bot.command(["admin", "stats"], async (ctx) => {
     if (!ctx.from || ctx.from.id !== config.ADMIN_TELEGRAM_ID) return;
-    const stats = db.stats();
-    await ctx.reply(
-      `Пользователей: ${stats.users}\nГенераций: ${stats.generations}\nШаблонов: ${stats.favorites}\nПокупок: ${stats.payments}\nStars получено: ${stats.stars}`,
-    );
+    await showAdminReport(ctx, 1);
+  });
+
+  bot.callbackQuery(/^admin:period:(0|1|7|30)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    await ctx.answerCallbackQuery("Обновляю…");
+    const periodDays = Number(ctx.match[1]) as AnalyticsPeriodDays;
+    const balance = await getBotStarBalance(ctx.api);
+    await ctx.editMessageText(formatBusinessReport(db.businessStats(periodDays), balance), {
+      reply_markup: adminKeyboard(periodDays),
+    });
+  });
+
+  bot.callbackQuery("admin:sources", async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(formatAcquisitionReport(db.acquisitionStats()), {
+      reply_markup: new InlineKeyboard().text("← К отчёту", "admin:period:30"),
+    });
   });
 
   bot.callbackQuery("menu:main", async (ctx) => {
@@ -284,6 +378,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
   });
 
   bot.callbackQuery("menu:tariffs", async (ctx) => {
+    track(ctx.from.id, "pricing_viewed");
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
     await ctx.editMessageText(
@@ -309,6 +404,10 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       return;
     }
     const selected = CREDIT_PACKAGES[packageId];
+    track(ctx.from.id, "invoice_created", selected.id, {
+      package_id: selected.id,
+      stars: selected.stars,
+    });
     await ctx.answerCallbackQuery();
     await ctx.replyWithInvoice(
       `Пакет «${selected.title}»`,
@@ -411,6 +510,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     }
     const reservation = db.reserveRequest(ctx.from.id);
     if (!reservation) {
+      track(ctx.from.id, "paywall_shown", "refinement");
       await ctx.answerCallbackQuery("Лимит закончился");
       await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", { reply_markup: mainMenu() });
       return;
@@ -421,6 +521,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       const result = await ai.refine(refinement, ctx.session.lastSource, ctx.session.lastResult);
       db.saveGeneration(ctx.from.id, ctx.session.flow, ctx.session.category, ctx.session.lastSource, result);
       db.commitRequest(reservation.id);
+      track(ctx.from.id, "generation_refined", refinement, { refinement });
       ctx.session.lastResult = result;
       await replyResult(ctx, result);
     } catch (error) {
@@ -438,14 +539,14 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
     if (ctx.session.visualResponseId) {
-      await continueVisualConversation(ctx, db, ai, ctx.message.text);
+      await continueVisualConversation(ctx, db, ai, ctx.message.text, track);
       return;
     }
     if (!readyForInput(ctx)) {
       await ctx.reply("Отправь фотографию или скриншот, и я всё объясню.", { reply_markup: mainMenu() });
       return;
     }
-    await generateForUser(ctx, db, ai, ctx.message.text);
+    await generateForUser(ctx, db, ai, ctx.message.text, track);
   });
 
   bot.on("message:photo", async (ctx) => {
@@ -462,7 +563,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
     };
     const mediaGroupId = ctx.message.media_group_id;
     if (!mediaGroupId) {
-      await processVisualItems(ctx, [item], config, db, ai, resourceLimiter);
+      await processVisualItems(ctx, [item], config, db, ai, resourceLimiter, track);
       return;
     }
 
@@ -479,7 +580,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       if (!readyAlbum) return;
       pendingAlbums.delete(key);
       trackBackgroundTask(
-        processVisualItems(readyAlbum.ctx, readyAlbum.items, config, db, ai, resourceLimiter),
+        processVisualItems(readyAlbum.ctx, readyAlbum.items, config, db, ai, resourceLimiter, track),
       );
     }, 900);
     pendingAlbums.set(key, album);
@@ -500,7 +601,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       fileSize: ctx.message.document.file_size,
       mimeType,
       caption: ctx.message.caption,
-    }], config, db, ai, resourceLimiter);
+    }], config, db, ai, resourceLimiter, track);
   });
 
   bot.on("message:voice", async (ctx) => {
@@ -512,7 +613,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       await ctx.reply("Голосовое сообщение слишком большое. Максимальный размер — 10 МБ.");
       return;
     }
-    const reservation = await reserveForUser(ctx, db);
+    const reservation = await reserveForUser(ctx, db, track);
     if (!reservation) return;
     try {
       await ctx.api.sendChatAction(ctx.chat.id, "typing");
@@ -526,6 +627,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
         return { transcript, result };
       });
       finishGeneration(ctx, db, transcript, result, reservation);
+      track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
     } catch (error) {
@@ -536,6 +638,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
 
   bot.catch(async (error) => {
     console.error("Bot error", error.error);
+    await notifyAdminError("Необработанная ошибка", error.error);
     try {
       await error.ctx.reply("Что-то сломалось на моей стороне. Попробуй ещё раз через минуту.");
     } catch {
@@ -548,7 +651,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
       if (album.timer) clearTimeout(album.timer);
       pendingAlbums.delete(key);
       trackBackgroundTask(
-        processVisualItems(album.ctx, album.items, config, db, ai, resourceLimiter),
+        processVisualItems(album.ctx, album.items, config, db, ai, resourceLimiter, track),
       );
     }
     while (backgroundTasks.size > 0) {
@@ -574,22 +677,38 @@ function readyForInput(ctx: BotContext): boolean {
   return Boolean(ctx.session.awaitingInput && ctx.session.flow && ctx.session.category);
 }
 
-async function reserveForUser(ctx: BotContext, db: BotDatabase): Promise<string | undefined> {
+async function reserveForUser(
+  ctx: BotContext,
+  db: BotDatabase,
+  track?: TrackEvent,
+): Promise<string | undefined> {
   const reservation = db.reserveRequest(ctx.from!.id);
   if (reservation) return reservation.id;
+  track?.(ctx.from!.id, "paywall_shown");
   await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", {
     reply_markup: mainMenu(),
   });
   return undefined;
 }
 
-async function generateForUser(ctx: BotContext, db: BotDatabase, ai: AiService, source: string): Promise<void> {
-  const reservation = await reserveForUser(ctx, db);
+async function generateForUser(
+  ctx: BotContext,
+  db: BotDatabase,
+  ai: AiService,
+  source: string,
+  track: TrackEvent,
+): Promise<void> {
+  const reservation = await reserveForUser(ctx, db, track);
   if (!reservation) return;
   try {
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     const result = await ai.generate(ctx.session.flow!, ctx.session.category!, source);
     finishGeneration(ctx, db, source, result, reservation);
+    track(ctx.from!.id, "generation_text", ctx.session.flow, {
+      input_type: "text",
+      flow: ctx.session.flow,
+      category: ctx.session.category,
+    });
     await replyResult(ctx, result);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -619,6 +738,7 @@ async function processVisualItems(
   db: BotDatabase,
   ai: AiService,
   resourceLimiter: Semaphore,
+  track: TrackEvent,
 ): Promise<void> {
   if (items.length > MAX_ALBUM_IMAGES) {
     await ctx.reply(`За один раз можно отправить не больше ${MAX_ALBUM_IMAGES} изображений.`);
@@ -628,7 +748,7 @@ async function processVisualItems(
     await ctx.reply("Одно из изображений больше 8 МБ. Уменьши размер и попробуй снова.");
     return;
   }
-  const reservation = await reserveForUser(ctx, db);
+  const reservation = await reserveForUser(ctx, db, track);
   if (!reservation) return;
   try {
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
@@ -655,6 +775,11 @@ async function processVisualItems(
       ? `Альбом из ${items.length} изображений`
       : "Фотография или скриншот пользователя");
     finishGeneration(ctx, db, source, cleanResult, reservation);
+    const inputType = items.length > 1 ? "album" : "photo";
+    track(ctx.from!.id, "generation_photo", inputType, {
+      input_type: inputType,
+      image_count: items.length,
+    });
     ctx.session.visualResponseId = visual.responseId;
     await replyVisualResult(ctx, cleanResult);
   } catch (error) {
@@ -668,9 +793,10 @@ async function continueVisualConversation(
   db: BotDatabase,
   ai: AiService,
   question: string,
+  track: TrackEvent,
 ): Promise<void> {
   if (!ctx.session.visualResponseId) return;
-  const reservation = await reserveForUser(ctx, db);
+  const reservation = await reserveForUser(ctx, db, track);
   if (!reservation) return;
   try {
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
@@ -681,6 +807,9 @@ async function continueVisualConversation(
     ctx.session.lastSource = question;
     ctx.session.lastResult = cleanResult;
     ctx.session.visualResponseId = visual.responseId;
+    track(ctx.from!.id, "generation_text", "visual_followup", {
+      input_type: "visual_followup",
+    });
     await replyVisualResult(ctx, cleanResult);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -753,4 +882,26 @@ function formatPaymentDate(value: string): string {
     timeStyle: "short",
     timeZone: "Asia/Irkutsk",
   }).format(date);
+}
+
+function adminKeyboard(activePeriod: AnalyticsPeriodDays): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  const periods: Array<{ days: AnalyticsPeriodDays; label: string }> = [
+    { days: 1, label: "Сегодня" },
+    { days: 7, label: "7 дней" },
+    { days: 30, label: "30 дней" },
+    { days: 0, label: "Всё время" },
+  ];
+  for (const period of periods) {
+    const marker = period.days === activePeriod ? "✓ " : "";
+    keyboard.text(`${marker}${period.label}`, `admin:period:${period.days}`);
+    if (period.days === 7) keyboard.row();
+  }
+  return keyboard.row().text("📣 Источники", "admin:sources");
+}
+
+function sanitizeStartSource(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "direct";
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 64);
+  return normalized || "direct";
 }

@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  AcquisitionStats,
+  AnalyticsPeriodDays,
+  BusinessStats,
   CategoryId,
   FlowId,
   GenerationRecord,
@@ -100,11 +103,36 @@ export class BotDatabase {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS product_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        detail TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS user_acquisition (
+        telegram_id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
       CREATE INDEX IF NOT EXISTS payments_user_date
       ON payments(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS product_events_date
+      ON product_events(created_at DESC, event);
+
+      CREATE INDEX IF NOT EXISTS product_events_user_date
+      ON product_events(telegram_id, created_at DESC);
+
+      INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
+      SELECT telegram_id, 'legacy' FROM users;
     `);
   }
 
@@ -142,20 +170,40 @@ export class BotDatabase {
   }
 
   getStateInt(key: string, fallback = 0): number {
-    const row = this.db.prepare("SELECT value FROM app_state WHERE key = ?").get(key) as {
-      value: string;
-    } | undefined;
-    if (!row) return fallback;
-    const value = Number(row.value);
+    const value = Number(this.getState(key));
     return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
   }
 
   setStateInt(key: string, value: number): void {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error("State value must be non-negative");
+    this.setState(key, String(value));
+  }
+
+  getState(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM app_state WHERE key = ?").get(key) as {
+      value: string;
+    } | undefined;
+    return row?.value;
+  }
+
+  setState(key: string, value: string): void {
     this.db.prepare(`
       INSERT INTO app_state (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).run(key, String(value));
+    `).run(key, value);
+  }
+
+  recordEvent(telegramId: number, event: string, detail?: string): void {
+    this.db.prepare(`
+      INSERT INTO product_events (telegram_id, event, detail) VALUES (?, ?, ?)
+    `).run(telegramId, event, detail ?? null);
+  }
+
+  recordAcquisition(telegramId: number, source: string): boolean {
+    const result = this.db.prepare(`
+      INSERT OR IGNORE INTO user_acquisition (telegram_id, source) VALUES (?, ?)
+    `).run(telegramId, source);
+    return result.changes > 0;
   }
 
   getAccess(telegramId: number): UserAccess {
@@ -477,6 +525,99 @@ export class BotDatabase {
       SELECT title, content FROM favorites
       WHERE telegram_id = ? ORDER BY id DESC LIMIT ?
     `).all(telegramId, limit) as Array<{ title: string; content: string }>;
+  }
+
+  businessStats(periodDays: AnalyticsPeriodDays): BusinessStats {
+    const filter = periodDays === 0 ? "" : " AND created_at >= datetime('now', ?)";
+    const customerFilter = " AND telegram_id NOT IN (SELECT telegram_id FROM users WHERE plan = 'pro')";
+    const period = `-${periodDays} days`;
+    const scalar = (sql: string, usePeriod = true): number => {
+      const row = this.db.prepare(sql).get(...(usePeriod && periodDays !== 0 ? [period] : [])) as {
+        value: number;
+      };
+      return row.value;
+    };
+    const eventCountForPeriod = (event: string): number => {
+      const params: Array<string> = [event];
+      if (periodDays !== 0) params.push(period);
+      const row = this.db.prepare(
+        `SELECT COUNT(*) AS value FROM product_events WHERE event = ?${customerFilter}${filter}`,
+      ).get(...params) as { value: number };
+      return row.value;
+    };
+
+    const users = scalar("SELECT COUNT(*) AS value FROM users WHERE plan != 'pro'", false);
+    const newUsers = scalar(`SELECT COUNT(*) AS value FROM users WHERE plan != 'pro'${filter}`);
+    const activeUsers = scalar(
+      `SELECT COUNT(DISTINCT telegram_id) AS value FROM product_events WHERE 1 = 1${customerFilter}${filter}`,
+    );
+    const generations = scalar(`SELECT COUNT(*) AS value FROM generations WHERE 1 = 1${customerFilter}${filter}`);
+    const purchases = scalar(`SELECT COUNT(*) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`);
+    const payingUsers = scalar(
+      `SELECT COUNT(DISTINCT telegram_id) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`,
+    );
+    const grossStars = scalar(
+      `SELECT COALESCE(SUM(stars), 0) AS value FROM payments WHERE 1 = 1${customerFilter}${filter}`,
+    );
+    const refundFilter = periodDays === 0 ? "" : " AND refunded_at >= datetime('now', ?)";
+    const refunds = scalar(
+      `SELECT COUNT(*) AS value FROM payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
+    );
+    const refundedStars = scalar(
+      `SELECT COALESCE(SUM(stars), 0) AS value FROM payments WHERE status = 'refunded'${customerFilter}${refundFilter}`,
+    );
+    const packageParams = periodDays === 0 ? [] : [period];
+    const popularPackage = this.db.prepare(`
+      SELECT package_id FROM payments WHERE 1 = 1${customerFilter}${filter}
+      GROUP BY package_id ORDER BY COUNT(*) DESC, package_id LIMIT 1
+    `).get(...packageParams) as { package_id: string } | undefined;
+
+    return {
+      periodDays,
+      users,
+      newUsers,
+      activeUsers,
+      generations,
+      photoRequests: eventCountForPeriod("generation_photo"),
+      textRequests: eventCountForPeriod("generation_text"),
+      voiceRequests: eventCountForPeriod("generation_voice"),
+      purchases,
+      payingUsers,
+      grossStars,
+      refunds,
+      refundedStars,
+      conversionPercent: activeUsers > 0 ? Math.round((payingUsers / activeUsers) * 1_000) / 10 : 0,
+      popularPackage: popularPackage?.package_id,
+    };
+  }
+
+  acquisitionStats(limit = 8): AcquisitionStats[] {
+    const rows = this.db.prepare(`
+      SELECT a.source,
+             COUNT(*) AS users,
+             SUM(CASE WHEN p.telegram_id IS NOT NULL THEN 1 ELSE 0 END) AS paying_users,
+             COALESCE(SUM(p.stars), 0) AS stars
+      FROM user_acquisition a
+      LEFT JOIN (
+        SELECT telegram_id, SUM(CASE WHEN status = 'paid' THEN stars ELSE 0 END) AS stars
+        FROM payments GROUP BY telegram_id
+      ) p ON p.telegram_id = a.telegram_id
+      WHERE a.telegram_id NOT IN (SELECT telegram_id FROM users WHERE plan = 'pro')
+      GROUP BY a.source
+      ORDER BY users DESC, stars DESC
+      LIMIT ?
+    `).all(limit) as Array<{
+        source: string;
+        users: number;
+        paying_users: number;
+        stars: number;
+      }>;
+    return rows.map((row) => ({
+      source: row.source,
+      users: row.users,
+      payingUsers: row.paying_users,
+      stars: row.stars,
+    }));
   }
 
   stats(): { users: number; generations: number; favorites: number; payments: number; stars: number } {

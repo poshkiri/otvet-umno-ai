@@ -75,6 +75,33 @@ export interface RequestReservation {
   id: string;
 }
 
+export type AnalyticsPeriodDays = 1 | 7 | 30 | 0;
+
+export interface BusinessStats {
+  periodDays: AnalyticsPeriodDays;
+  users: number;
+  newUsers: number;
+  activeUsers: number;
+  generations: number;
+  photoRequests: number;
+  textRequests: number;
+  voiceRequests: number;
+  purchases: number;
+  payingUsers: number;
+  grossStars: number;
+  refunds: number;
+  refundedStars: number;
+  conversionPercent: number;
+  popularPackage?: string | undefined;
+}
+
+export interface AcquisitionStats {
+  source: string;
+  users: number;
+  payingUsers: number;
+  stars: number;
+}
+
 export const FLOW_LABELS: Record<FlowId, string> = {
   analyze: "Разбор переписки",
   compose: "Ответ с нуля",

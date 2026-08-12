@@ -131,3 +131,58 @@ test("startup recovery returns unfinished reservations", () => {
   assert.equal(restartedProcess.getAccess(id).freeUsed, 0);
   restartedProcess.close();
 });
+
+test("business analytics counts activity, revenue, refunds and conversion", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  db.ensureUser(3001);
+  db.ensureUser(3002);
+  db.ensureUser(3999);
+  db.setPlan(3999, "pro");
+  db.recordEvent(3999, "generation_photo", "owner-test");
+  db.saveGeneration(3999, "analyze", "auto", "Проверка владельца", "Ответ");
+  db.recordEvent(3001, "bot_started", "instagram");
+  db.recordEvent(3001, "generation_photo", "photo");
+  db.recordEvent(3001, "generation_text", "visual_followup");
+  db.recordEvent(3002, "generation_voice", "voice");
+  db.saveGeneration(3001, "analyze", "auto", "Фото", "Ответ");
+  db.saveGeneration(3002, "analyze", "auto", "Голос", "Ответ");
+  db.recordPayment(3001, "start", 50, 99, "payload-1", "analytics-charge-1");
+  db.recordPayment(3002, "plus", 200, 299, "payload-2", "analytics-charge-2");
+  db.markPaymentRefunded("analytics-charge-2");
+
+  const stats = db.businessStats(0);
+  assert.equal(stats.users, 2);
+  assert.equal(stats.activeUsers, 2);
+  assert.equal(stats.generations, 2);
+  assert.equal(stats.photoRequests, 1);
+  assert.equal(stats.textRequests, 1);
+  assert.equal(stats.voiceRequests, 1);
+  assert.equal(stats.purchases, 2);
+  assert.equal(stats.payingUsers, 2);
+  assert.equal(stats.grossStars, 398);
+  assert.equal(stats.refunds, 1);
+  assert.equal(stats.refundedStars, 299);
+  assert.equal(stats.conversionPercent, 100);
+  db.close();
+});
+
+test("acquisition keeps the first source and does not multiply users with repeat purchases", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  db.ensureUser(4001);
+  db.ensureUser(4002);
+  assert.equal(db.recordAcquisition(4001, "instagram"), true);
+  assert.equal(db.recordAcquisition(4001, "tiktok"), false);
+  db.recordAcquisition(4002, "instagram");
+  db.recordPayment(4001, "start", 50, 99, "payload-1", "source-charge-1");
+  db.recordPayment(4001, "plus", 200, 299, "payload-2", "source-charge-2");
+
+  assert.deepEqual(db.acquisitionStats(), [{
+    source: "instagram",
+    users: 2,
+    payingUsers: 1,
+    stars: 398,
+  }]);
+  db.close();
+});

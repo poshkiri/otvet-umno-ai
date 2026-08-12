@@ -12,6 +12,13 @@ const schema = z.object({
   FREE_REQUEST_LIMIT: z.coerce.number().int().min(0).default(5),
   DATABASE_PATH: z.string().default("./data/bot.db"),
   ADMIN_TELEGRAM_ID: z.coerce.number().int().positive().optional(),
+  POSTHOG_API_KEY: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().min(10).optional(),
+  ),
+  POSTHOG_HOST: z.string().url().default("https://eu.i.posthog.com"),
+  REPORT_TIMEZONE: z.string().default("Asia/Irkutsk"),
+  DAILY_REPORT_HOUR: z.coerce.number().int().min(0).max(23).default(10),
 });
 
 export type AppConfig = z.infer<typeof schema>;

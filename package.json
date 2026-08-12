@@ -12,13 +12,14 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.22"
   },
   "dependencies": {
     "@grammyjs/runner": "^2.0.3",
     "dotenv": "^17.4.2",
     "grammy": "^1.45.1",
     "openai": "^7.4.0",
+    "posthog-node": "^5.48.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

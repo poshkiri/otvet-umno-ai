@@ -4,13 +4,16 @@ import { loadConfig } from "./config.js";
 import { BotDatabase } from "./database.js";
 import { run } from "@grammyjs/runner";
 import { reconcileStarTransactions } from "./reconciliation.js";
+import { ProductAnalytics } from "./analytics.js";
+import { startDailyReporter } from "./reporting.js";
 
 const config = loadConfig();
 const database = new BotDatabase(config.DATABASE_PATH, config.FREE_REQUEST_LIMIT);
 const recoveredRequests = database.recoverReservedRequests();
 if (recoveredRequests) console.log(`Возвращено зависших резервов: ${recoveredRequests}`);
 const ai = new AiService(config.OPENAI_API_KEY, config.OPENAI_MODEL, config.OPENAI_TRANSCRIBE_MODEL);
-const { bot, drainBackgroundTasks } = createBot(config, database, ai);
+const analytics = new ProductAnalytics(config.POSTHOG_API_KEY, config.POSTHOG_HOST, config.BOT_TOKEN);
+const { bot, drainBackgroundTasks } = createBot(config, database, ai, analytics);
 
 console.log("ОтветьУмно AI запускается…");
 await bot.init();
@@ -46,6 +49,8 @@ try {
   console.error("Stars reconciliation failed", error);
 }
 
+const dailyReporter = startDailyReporter(bot.api, database, config, analytics);
+
 const runner = run(bot, {
   sink: { concurrency: 25 },
   runner: { retryInterval: "exponential", maxRetryTime: 30_000 },
@@ -75,9 +80,12 @@ const stop = async (signal: string): Promise<void> => {
   stopping = true;
   console.log(`Получен ${signal}, жду завершения активных задач…`);
   clearInterval(reconciliationTimer);
+  dailyReporter.stop();
   await runner.stop();
   await drainBackgroundTasks();
+  await dailyReporter.drain();
   if (reconciliationTask) await reconciliationTask;
+  await analytics.shutdown();
   database.close();
   console.log("Бот остановлен корректно");
 };
