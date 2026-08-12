@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { visualResultMenu } from "../src/keyboards.js";
+import { mainMenu, tariffsMenu, visualResultMenu } from "../src/keyboards.js";
+
+test("main menu exposes history and balance while keeping purchase separate", () => {
+  assert.deepEqual(mainMenu().inline_keyboard, [
+    [
+      { text: "🕘 История", callback_data: "menu:history" },
+      { text: "⚡ Лимит", callback_data: "menu:balance" },
+    ],
+    [{ text: "⭐ Купить запросы", callback_data: "menu:tariffs" }],
+  ]);
+});
+
+test("tariffs return directly to the main menu", () => {
+  assert.deepEqual(tariffsMenu().inline_keyboard.at(-1), [
+    { text: "← В меню", callback_data: "menu:main" },
+  ]);
+});
 
 test("visual result keeps only the new photo action", () => {
   assert.deepEqual(visualResultMenu().inline_keyboard, [[{

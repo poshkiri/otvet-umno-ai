@@ -4,7 +4,9 @@ import { CREDIT_PACKAGES } from "./payments.js";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("👤 История, лимит и тариф", "menu:profile");
+    .text("🕘 История", "menu:history")
+    .text("⚡ Лимит", "menu:balance").row()
+    .text("⭐ Купить запросы", "menu:tariffs");
 }
 
 export function categoryMenu(flow: FlowId): InlineKeyboard {
@@ -48,7 +50,6 @@ export function profileMenu(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🕘 История", "menu:history")
     .text("⭐ Шаблоны", "menu:favorites").row()
-    .text("💳 Тариф", "menu:tariffs")
     .text("⚡ Лимит", "menu:balance").row()
     .text("← В меню", "menu:main");
 }
@@ -59,7 +60,7 @@ export function tariffsMenu(): InlineKeyboard {
     .text(`Плюс · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
     .text(`Про · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
     .text("🧾 Мои покупки", "menu:payments").row()
-    .text("← Назад", "menu:profile");
+    .text("← В меню", "menu:main");
 }
 
 const QUICK_CATEGORIES: Partial<Record<FlowId, CategoryId>> = {

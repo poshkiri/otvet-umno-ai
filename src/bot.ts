@@ -274,7 +274,7 @@ export function createBot(
   bot.command("menu", async (ctx) => {
     ctx.session.awaitingInput = false;
     await ctx.reply(
-      "Отправь фото или скриншот прямо в чат. Здесь можно открыть историю и проверить лимит:",
+      "Что хочешь посмотреть? Фотографию или скриншот можно отправить прямо в чат.",
       { reply_markup: mainMenu() },
     );
   });
@@ -445,7 +445,7 @@ export function createBot(
 
   bot.callbackQuery("menu:profile", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Твои ответы, лимит и тариф:", { reply_markup: profileMenu() });
+    await ctx.editMessageText("Твоя история, сохранённые ответы и лимит:", { reply_markup: profileMenu() });
   });
 
   bot.callbackQuery("menu:balance", async (ctx) => {
@@ -453,7 +453,9 @@ export function createBot(
     const access = db.getAccess(ctx.from.id);
     await ctx.editMessageText(
       balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
-      { reply_markup: profileMenu() },
+      { reply_markup: new InlineKeyboard()
+        .text("⭐ Купить запросы", "menu:tariffs").row()
+        .text("← В меню", "menu:main") },
     );
   });
 
