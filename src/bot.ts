@@ -74,6 +74,11 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
   bot.use(session({ initial: (): BotSession => ({ awaitingInput: false }) }));
 
   bot.use(async (ctx, next) => {
+    if (!db.claimUpdate(ctx.update.update_id)) return;
+    await next();
+  });
+
+  bot.use(async (ctx, next) => {
     if (ctx.from) {
       db.ensureUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
       if (ctx.from.id === config.ADMIN_TELEGRAM_ID) db.setPlan(ctx.from.id, "pro");
@@ -82,6 +87,7 @@ export function createBot(config: AppConfig, db: BotDatabase, ai: AiService): Bo
   });
 
   bot.command("start", async (ctx) => {
+    if (!ctx.from || !db.claimAction(ctx.from.id, "start", 8)) return;
     ctx.session = { awaitingInput: false };
     await ctx.replyWithPhoto(new InputFile("./assets/welcome-cover.png"), {
       caption: [

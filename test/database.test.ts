@@ -78,3 +78,23 @@ test("refund removes only unused credits from the refunded package", () => {
   assert.equal(db.markPaymentRefunded("charge-a"), false);
   db.close();
 });
+
+test("database rejects a duplicate Telegram update", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+
+  assert.equal(db.claimUpdate(100), true);
+  assert.equal(db.claimUpdate(100), false);
+  assert.equal(db.claimUpdate(101), true);
+  db.close();
+});
+
+test("action cooldown suppresses repeated start events", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+
+  assert.equal(db.claimAction(777, "start", 8), true);
+  assert.equal(db.claimAction(777, "start", 8), false);
+  assert.equal(db.claimAction(777, "another-action", 8), true);
+  db.close();
+});

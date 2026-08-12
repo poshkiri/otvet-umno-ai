@@ -61,6 +61,18 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
       );
 
+      CREATE TABLE IF NOT EXISTS processed_updates (
+        update_id INTEGER PRIMARY KEY,
+        processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS action_locks (
+        telegram_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        handled_at INTEGER NOT NULL,
+        PRIMARY KEY (telegram_id, action)
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -78,6 +90,28 @@ export class BotDatabase {
         first_name = excluded.first_name,
         updated_at = CURRENT_TIMESTAMP
     `).run(telegramId, username ?? null, firstName ?? null);
+  }
+
+  claimUpdate(updateId: number): boolean {
+    const result = this.db.prepare(
+      "INSERT OR IGNORE INTO processed_updates (update_id) VALUES (?)",
+    ).run(updateId);
+    if (result.changes === 0) return false;
+    if (updateId % 100 === 0) {
+      this.db.prepare("DELETE FROM processed_updates WHERE update_id < ?").run(updateId - 10_000);
+    }
+    return true;
+  }
+
+  claimAction(telegramId: number, action: string, cooldownSeconds: number): boolean {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.db.prepare(`
+      INSERT INTO action_locks (telegram_id, action, handled_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(telegram_id, action) DO UPDATE SET handled_at = excluded.handled_at
+      WHERE action_locks.handled_at <= excluded.handled_at - ?
+    `).run(telegramId, action, now, cooldownSeconds);
+    return result.changes > 0;
   }
 
   getAccess(telegramId: number): UserAccess {
