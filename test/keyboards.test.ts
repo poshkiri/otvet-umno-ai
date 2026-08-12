@@ -1,24 +1,52 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mainMenu, tariffsMenu, visualResultMenu } from "../src/keyboards.js";
+import {
+  capabilitiesMenu,
+  mainMenu,
+  profileMenu,
+  tariffsMenu,
+  visualResultMenu,
+} from "../src/keyboards.js";
 
-test("main menu exposes history and balance while keeping purchase separate", () => {
+test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
     [{ text: "🎨 Создать картинку", callback_data: "image:create" }],
     [
-      { text: "🕘 История", callback_data: "menu:history" },
-      { text: "⚡ Лимиты", callback_data: "menu:balance" },
+      { text: "✨ Возможности", callback_data: "menu:capabilities" },
+      { text: "👤 Мой кабинет", callback_data: "menu:profile" },
     ],
-    [{ text: "⭐ Plus и запросы", callback_data: "menu:tariffs" }],
   ]);
 });
 
-test("tariffs return directly to the main menu", () => {
+test("capabilities menu leads to creation, account and main menu", () => {
+  assert.deepEqual(capabilitiesMenu().inline_keyboard, [
+    [{ text: "🎨 Создать картинку", callback_data: "image:create" }],
+    [{ text: "👤 Мой кабинет", callback_data: "menu:profile" }],
+    [{ text: "← В меню", callback_data: "menu:main" }],
+  ]);
+});
+
+test("profile groups limits, purchases and personal content", () => {
+  assert.deepEqual(profileMenu().inline_keyboard, [
+    [
+      { text: "⚡ Мои лимиты", callback_data: "menu:balance" },
+      { text: "⭐ Plus и запросы", callback_data: "menu:tariffs" },
+    ],
+    [
+      { text: "🕘 История", callback_data: "menu:history" },
+      { text: "🔖 Сохранённое", callback_data: "menu:favorites" },
+    ],
+    [{ text: "🧾 Мои покупки", callback_data: "menu:payments" }],
+    [{ text: "← В меню", callback_data: "menu:main" }],
+  ]);
+});
+
+test("tariffs return to the account menu", () => {
   assert.deepEqual(tariffsMenu().inline_keyboard[1], [
     { text: "❓ Как купить Stars", callback_data: "stars:help" },
   ]);
   assert.deepEqual(tariffsMenu().inline_keyboard.at(-1), [
-    { text: "← В меню", callback_data: "menu:main" },
+    { text: "← В кабинет", callback_data: "menu:profile" },
   ]);
   assert.deepEqual(tariffsMenu().inline_keyboard[2], [
     { text: "50 запросов · 149 ⭐", callback_data: "buy:start" },

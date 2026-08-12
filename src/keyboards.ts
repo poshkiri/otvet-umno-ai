@@ -5,9 +5,15 @@ import { CREDIT_PACKAGES } from "./payments.js";
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🎨 Создать картинку", "image:create").row()
-    .text("🕘 История", "menu:history")
-    .text("⚡ Лимиты", "menu:balance").row()
-    .text("⭐ Plus и запросы", "menu:tariffs");
+    .text("✨ Возможности", "menu:capabilities")
+    .text("👤 Мой кабинет", "menu:profile");
+}
+
+export function capabilitiesMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🎨 Создать картинку", "image:create").row()
+    .text("👤 Мой кабинет", "menu:profile").row()
+    .text("← В меню", "menu:main");
 }
 
 export function categoryMenu(flow: FlowId): InlineKeyboard {
@@ -49,9 +55,11 @@ export function refinementsMenu(): InlineKeyboard {
 
 export function profileMenu(): InlineKeyboard {
   return new InlineKeyboard()
+    .text("⚡ Мои лимиты", "menu:balance")
+    .text("⭐ Plus и запросы", "menu:tariffs").row()
     .text("🕘 История", "menu:history")
-    .text("⭐ Шаблоны", "menu:favorites").row()
-    .text("⚡ Лимит", "menu:balance").row()
+    .text("🔖 Сохранённое", "menu:favorites").row()
+    .text("🧾 Мои покупки", "menu:payments").row()
     .text("← В меню", "menu:main");
 }
 
@@ -63,7 +71,7 @@ export function tariffsMenu(): InlineKeyboard {
     .text(`${CREDIT_PACKAGES.plus.credits} запросов · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
     .text(`${CREDIT_PACKAGES.pro.credits} запросов · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
     .text("🧾 Мои покупки", "menu:payments").row()
-    .text("← В меню", "menu:main");
+    .text("← В кабинет", "menu:profile");
 }
 
 export function imageResultMenu(): InlineKeyboard {

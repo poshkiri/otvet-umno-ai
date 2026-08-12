@@ -4,6 +4,7 @@ import type { AppConfig } from "./config.js";
 import { AiService } from "./ai.js";
 import { BotDatabase } from "./database.js";
 import {
+  capabilitiesMenu,
   categoryMenu,
   mainMenu,
   imageResultMenu,
@@ -371,6 +372,31 @@ export function createBot(
     );
   });
 
+  bot.callbackQuery("menu:capabilities", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      [
+        "✨ Что умеет Пойми AI",
+        "",
+        "📸 Фото и скриншоты",
+        "Распознаю товары, этикетки, документы, ошибки и учебные задания.",
+        "",
+        "💬 Текст и голос",
+        "Отвечаю на вопросы, объясняю сложное, пишу и перевожу тексты.",
+        "",
+        "🎓 Учёба",
+        "Решаю математику и другие задачи по шагам.",
+        "",
+        "🎨 Картинки",
+        "Создаю изображения по описанию и изменяю присланные фотографии.",
+        "",
+        "Просто отправь сообщение или файл — режим выбирать не нужно.",
+      ].join("\n"),
+      capabilitiesMenu(),
+    );
+  });
+
   bot.command("image", async (ctx) => {
     ctx.session.awaitingImagePrompt = true;
     await ctx.reply("Опиши картинку, которую хочешь получить. Например: «Космический Иркутск ночью, реалистичное фото».", {
@@ -646,13 +672,26 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       text,
-      new InlineKeyboard().text("← К тарифам", "menu:tariffs"),
+      new InlineKeyboard().text("← В кабинет", "menu:profile"),
     );
   });
 
   bot.callbackQuery("menu:profile", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await editOrReplyMenu(ctx, "Твоя история, сохранённые ответы и лимит:", profileMenu());
+    const access = db.getAccess(ctx.from.id);
+    const subscription = db.getSubscriptionAccess(ctx.from.id);
+    await editOrReplyMenu(
+      ctx,
+      [
+        "👤 Мой кабинет",
+        "",
+        userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
+        "",
+        "Здесь находятся лимиты, подписка, история и покупки.",
+      ].join("\n"),
+      profileMenu(),
+    );
   });
 
   bot.callbackQuery("menu:balance", async (ctx) => {
@@ -673,7 +712,7 @@ export function createBot(
       ].join("\n"),
       new InlineKeyboard()
         .text("⭐ Купить запросы", "menu:tariffs").row()
-        .text("← В меню", "menu:main"),
+        .text("← В кабинет", "menu:profile"),
     );
   });
 
@@ -693,7 +732,11 @@ export function createBot(
     const text = items.length
       ? `🕘 Последние ответы\n\n${items.map((item, index) => `${index + 1}. ${FLOW_LABELS[item.flow]}\n${item.result.slice(0, 450)}`).join("\n\n")}`
       : "История пока пустая.";
-    await replyChunks(ctx, text);
+    await editOrReplyMenu(
+      ctx,
+      text,
+      new InlineKeyboard().text("← В кабинет", "menu:profile"),
+    );
   });
 
   bot.callbackQuery("menu:favorites", async (ctx) => {
@@ -702,7 +745,18 @@ export function createBot(
     const text = items.length
       ? `⭐ Твои шаблоны\n\n${items.map((item, index) => `${index + 1}. ${item.title}\n${item.content}`).join("\n\n")}`
       : "Сохранённых шаблонов пока нет. После генерации нажми «⭐ Сохранить».";
+    if (text.length <= 4_000) {
+      await editOrReplyMenu(
+        ctx,
+        text,
+        new InlineKeyboard().text("← В кабинет", "menu:profile"),
+      );
+      return;
+    }
     await replyChunks(ctx, text);
+    await ctx.reply("Вернуться к личным разделам:", {
+      reply_markup: new InlineKeyboard().text("← В кабинет", "menu:profile"),
+    });
   });
 
   bot.callbackQuery(/^flow:(.+)$/, async (ctx) => {
@@ -1415,7 +1469,7 @@ function subscriptionMenu(autoRenew: boolean): InlineKeyboard {
     .text("❓ Как купить Stars", "stars:help").row()
     .text("➕ Купить разовые запросы", "buy:start").row()
     .text("🧾 Мои покупки", "menu:payments").row()
-    .text("← В меню", "menu:main");
+    .text("← В кабинет", "menu:profile");
 }
 
 function formatPaymentDate(value: string): string {
