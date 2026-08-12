@@ -381,7 +381,7 @@ export function createBot(
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
-        "Как пользоваться ОтветьУмно AI",
+        "Как пользоваться Пойми AI",
         "",
         "Можно просто написать вопрос или отправить голосовое.",
         "Фото и скриншоты бот распознает и объяснит.",
@@ -554,7 +554,7 @@ export function createBot(
       stars: config.PLUS_SUBSCRIPTION_STARS,
     });
     const invoiceUrl = await ctx.api.raw.createInvoiceLink({
-      title: "ОтветьУмно Plus",
+      title: "Пойми AI Plus",
       description: `${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} AI-картинок на 30 дней.`,
       payload: createSubscriptionPayload(ctx.from.id),
       currency: "XTR",
@@ -579,7 +579,7 @@ export function createBot(
         "1. Открой Telegram Desktop, Telegram Web или прямую Android-версию.",
         "2. Нажми кнопку «Открыть @PremiumBot» ниже.",
         "3. Выбери Telegram Stars и нужное количество.",
-        "4. После оплаты вернись в ОтветьУмно AI.",
+        "4. После оплаты вернись в Пойми AI.",
         "5. Открой «Plus и запросы» и нажми «Оформить Plus».",
         "",
         "Используй только официальный бот Telegram — @PremiumBot.",
@@ -617,7 +617,7 @@ export function createBot(
     await ctx.answerCallbackQuery();
     await ctx.replyWithInvoice(
       `Пакет «${selected.title}»`,
-      `${selected.credits} запросов к ОтветьУмно AI. Запросы не сгорают.`,
+      `${selected.credits} запросов к Пойми AI. Запросы не сгорают.`,
       createPaymentPayload(packageId, ctx.from.id),
       "XTR",
       [{ label: `${selected.credits} запросов`, amount: selected.stars }],

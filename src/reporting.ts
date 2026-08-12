@@ -18,7 +18,7 @@ export function formatBusinessReport(stats: BusinessStats, starBalance?: number)
     : stats.popularPackage === "plus_subscription" ? "Подписка Plus" : "пока нет";
   const netStars = stats.grossStars - stats.refundedStars;
   return [
-    `📊 ОтветьУмно AI · ${PERIOD_LABELS[stats.periodDays]}`,
+    `📊 Пойми AI · ${PERIOD_LABELS[stats.periodDays]}`,
     "",
     "👥 Аудитория",
     `Всего пользователей: ${stats.users}`,

@@ -27,8 +27,9 @@ const ai = new AiService(
 const analytics = new ProductAnalytics(config.POSTHOG_API_KEY, config.POSTHOG_HOST, config.BOT_TOKEN);
 const { bot, drainBackgroundTasks } = createBot(config, database, ai, analytics);
 
-console.log("ОтветьУмно AI запускается…");
+console.log("Пойми AI запускается…");
 await bot.init();
+await bot.api.setMyName("Пойми AI");
 await bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "menu", description: "Открыть главное меню" },
@@ -39,19 +40,21 @@ await bot.api.setMyCommands([
   { command: "help", description: "Как пользоваться" },
 ]);
 await bot.api.setMyShortDescription(
-  "Фото, голос, вопросы и AI-картинки — объясняю и помогаю простыми словами.",
+  "Фото, голос, вопросы, документы и AI-картинки — всё в одном помощнике.",
 );
 await bot.api.setMyDescription(
   [
-    "ОтветьУмно AI помогает:",
+    "✨ AI-помощник на каждый день",
     "",
-    "• объяснить товар, этикетку или инструкцию;",
-    "• разобрать скриншот, документ или ошибку;",
-    "• решить учебную задачу по фотографии;",
-    "• ответить на текстовый или голосовой вопрос;",
-    "• создать картинку по описанию.",
+    "💬 Отвечает на любые вопросы",
+    "📸 Понимает фото, товары и скриншоты",
+    "📄 Разбирает документы и инструкции",
+    "🎓 Решает учебные задачи по шагам",
+    "🎙 Понимает голосовые сообщения",
+    "✍️ Пишет, проверяет и переводит тексты",
+    "🎨 Создаёт картинки и изменяет фотографии",
     "",
-    "Просто отправь фотографию — выбирать режим не нужно.",
+    "Просто напиши или отправь файл — режим выбирать не нужно.",
   ].join("\n"),
 );
 try {
