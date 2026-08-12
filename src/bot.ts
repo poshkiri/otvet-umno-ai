@@ -459,7 +459,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", { reply_markup: mainMenu() });
+    await editOrReplyMenu(ctx, "Отправь фото, текст или голосовое прямо в чат.", mainMenu());
   });
 
   bot.callbackQuery("menu:tariffs", async (ctx) => {
@@ -471,7 +471,8 @@ export function createBot(
       ctx.from.id,
       config.PLUS_REQUEST_LIMIT,
     );
-    await ctx.editMessageText(
+    await editOrReplyMenu(
+      ctx,
       [
         "⭐ Plus и запросы",
         "",
@@ -492,9 +493,9 @@ export function createBot(
         "",
         "Разовые запросы не сгорают. Plus продлевается каждые 30 дней, отменить можно здесь.",
       ].join("\n"),
-      { reply_markup: subscription.active
+      subscription.active
         ? subscriptionMenu(subscription.autoRenew)
-        : tariffsMenu() },
+        : tariffsMenu(),
     );
   });
 
@@ -570,14 +571,16 @@ export function createBot(
         `Дата: ${formatPaymentDate(payment.createdAt)}`,
       ].join("\n")).join("\n\n")}`);
     const text = sections.length ? `🧾 Мои покупки\n\n${sections.join("\n\n")}` : "Покупок пока нет.";
-    await ctx.editMessageText(text, {
-      reply_markup: new InlineKeyboard().text("← К тарифам", "menu:tariffs"),
-    });
+    await editOrReplyMenu(
+      ctx,
+      text,
+      new InlineKeyboard().text("← К тарифам", "menu:tariffs"),
+    );
   });
 
   bot.callbackQuery("menu:profile", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Твоя история, сохранённые ответы и лимит:", { reply_markup: profileMenu() });
+    await editOrReplyMenu(ctx, "Твоя история, сохранённые ответы и лимит:", profileMenu());
   });
 
   bot.callbackQuery("menu:balance", async (ctx) => {
@@ -585,7 +588,8 @@ export function createBot(
     const access = db.getAccess(ctx.from.id);
     const images = db.getImageAllowance(ctx.from.id, imageLimits);
     const subscription = db.getSubscriptionAccess(ctx.from.id);
-    await ctx.editMessageText(
+    await editOrReplyMenu(
+      ctx,
       [
         balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
         "",
@@ -595,9 +599,9 @@ export function createBot(
           `Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}`,
         ] : []),
       ].join("\n"),
-      { reply_markup: new InlineKeyboard()
+      new InlineKeyboard()
         .text("⭐ Купить запросы", "menu:tariffs").row()
-        .text("← В меню", "menu:main") },
+        .text("← В меню", "menu:main"),
     );
   });
 
@@ -1255,6 +1259,19 @@ async function handleError(ctx: BotContext, error: unknown): Promise<void> {
 function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
   if (plan === "pro") return "Тариф: безлимит";
   return `Бесплатно осталось: ${Math.max(0, freeLimit - freeUsed)}\nКупленных запросов: ${credits}`;
+}
+
+async function editOrReplyMenu(
+  ctx: BotContext,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<void> {
+  const message = ctx.callbackQuery?.message;
+  if (message && "text" in message) {
+    await ctx.editMessageText(text, { reply_markup: keyboard });
+    return;
+  }
+  await ctx.reply(text, { reply_markup: keyboard });
 }
 
 function imageAllowanceText(allowance: ImageAllowance): string {
