@@ -217,7 +217,21 @@ export function createBot(
         period_end: periodEnd,
       });
       await ctx.reply(
-        `Plus активирован ✅\n\nДоступно ${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+        [
+          "Plus активирован ✅",
+          "",
+          `Доступно ${config.PLUS_REQUEST_LIMIT} AI-баллов и до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней.`,
+          `Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+          "",
+          "Теперь можно:",
+          "• задавать любые вопросы текстом или голосом;",
+          "• отправлять фото, скриншоты и документы на разбор;",
+          "• решать учебные задачи и разбираться в сложных темах;",
+          "• писать, проверять и переводить тексты;",
+          "• создавать картинки и изменять свои фотографии.",
+          "",
+          "Просто отправь сообщение, голосовое или файл — бот сам поймёт задачу.",
+        ].join("\n"),
         { reply_markup: mainMenu() },
       );
       if (config.ADMIN_TELEGRAM_ID) {
@@ -266,7 +280,23 @@ export function createBot(
     });
     const access = db.getAccess(ctx.from.id);
     await ctx.reply(
-      `Оплата прошла ✅\n\nНачислено: ${selected.credits} запросов\nТеперь доступно: ${access.credits} купленных запросов\n\nСпасибо! Можешь сразу отправлять фото или скриншот.`,
+      [
+        "Оплата прошла ✅",
+        "",
+        `Начислено: ${selected.credits} запросов`,
+        `Доступно: ${access.credits} купленных запросов`,
+        "",
+        "Что можно сделать:",
+        "• написать вопрос на любую тему;",
+        "• отправить фото, скриншот или документ;",
+        "• записать голосовой вопрос;",
+        "• решить задачу по математике или другому предмету;",
+        "• попросить написать, проверить или перевести текст;",
+        "• получить понятное объяснение сложной темы.",
+        "",
+        "Просто отправь сообщение — бот сам выберет подходящий режим.",
+        "Для создания и изменения картинок действует отдельный лимит: одна пробная картинка, затем Plus.",
+      ].join("\n"),
       { reply_markup: mainMenu() },
     );
     if (config.ADMIN_TELEGRAM_ID) {
@@ -320,13 +350,13 @@ export function createBot(
       caption: [
         `Привет, ${displayName(ctx.from?.first_name)}!`,
         "",
-        "📷 Отправь фотографию или скриншот — я сам определю, что на нём, и всё объясню.",
+        "Я универсальный AI-помощник. Просто напиши или отправь файл — я сам пойму задачу.",
         "",
-        "Товар • этикетка • инструкция",
-        "Скриншот • документ • учебная задача",
-        "Голосовой вопрос • создание картинок",
+        "Могу объяснить тему, ответить на вопрос, решить задачу, помочь с текстом или переводом.",
+        "Понимаю фотографии, скриншоты, документы и голосовые сообщения.",
+        "Создаю картинки и могу изменить присланную фотографию.",
         "",
-        "Нажми значок камеры или скрепки возле поля сообщения.",
+        "Напиши вопрос или нажми значок камеры, микрофона или скрепки.",
         `На старте доступно ${config.FREE_REQUEST_LIMIT} бесплатных запросов.`,
       ].join("\n"),
       reply_markup: mainMenu(),
@@ -336,7 +366,7 @@ export function createBot(
   bot.command("menu", async (ctx) => {
     ctx.session.awaitingInput = false;
     await ctx.reply(
-      "Что хочешь посмотреть? Фотографию или скриншот можно отправить прямо в чат.",
+      "Напиши вопрос, отправь фото, документ или голосовое. Чтобы создать картинку, нажми кнопку ниже.",
       { reply_markup: mainMenu() },
     );
   });
@@ -350,7 +380,16 @@ export function createBot(
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      "Отправь фото, скриншот, текст или голосовое — я сам пойму задачу. Чтобы нарисовать картинку, напиши, например: «Нарисуй уютное кафе у озера», или открой /menu.",
+      [
+        "Как пользоваться ОтветьУмно AI",
+        "",
+        "Можно просто написать вопрос или отправить голосовое.",
+        "Фото и скриншоты бот распознает и объяснит.",
+        "Документы, инструкции и учебные задачи разберёт простыми словами.",
+        "С текстами поможет написать, проверить, сократить или перевести.",
+        "Для картинки напиши, например: «Нарисуй уютное кафе у озера».",
+        "Для изменения фото сначала отправь его, затем напиши, что изменить.",
+      ].join("\n"),
       { reply_markup: mainMenu() },
     );
   });
@@ -459,7 +498,11 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery();
-    await editOrReplyMenu(ctx, "Отправь фото, текст или голосовое прямо в чат.", mainMenu());
+    await editOrReplyMenu(
+      ctx,
+      "Напиши вопрос, отправь фото, документ или голосовое. Чтобы создать картинку, нажми кнопку ниже.",
+      mainMenu(),
+    );
   });
 
   bot.callbackQuery("menu:tariffs", async (ctx) => {
@@ -697,7 +740,10 @@ export function createBot(
     if (!reservation) {
       track(ctx.from.id, "paywall_shown", "refinement");
       await ctx.answerCallbackQuery("Лимит закончился");
-      await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", { reply_markup: mainMenu() });
+      await ctx.reply(
+        "Бесплатные запросы закончились. В тарифах можно подключить Plus или купить дополнительные запросы.",
+        { reply_markup: mainMenu() },
+      );
       return;
     }
     await ctx.answerCallbackQuery("Переделываю…");
@@ -759,7 +805,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery("Отменено");
-    await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", {
+    await ctx.editMessageText("Напиши вопрос, отправь фото, документ или голосовое.", {
       reply_markup: mainMenu(),
     });
   });
@@ -949,7 +995,7 @@ async function reserveForUser(
   const reservation = db.reserveRequest(ctx.from!.id);
   if (reservation) return reservation.id;
   track?.(ctx.from!.id, "paywall_shown");
-  await ctx.reply("Бесплатные запросы закончились. Открой тарифы.", {
+  await ctx.reply("Бесплатные запросы закончились. Подключи Plus или купи дополнительные запросы.", {
     reply_markup: mainMenu(),
   });
   return undefined;

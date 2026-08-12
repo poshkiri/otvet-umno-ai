@@ -26,7 +26,7 @@ test("business report exposes the key product and payment metrics", () => {
   assert.match(report, /Активных: 40/);
   assert.match(report, /Конверсия активных в оплату: 7,5%/);
   assert.match(report, /Чистыми: 597 Stars/);
-  assert.match(report, /Популярный пакет: Плюс/);
+  assert.match(report, /Популярный пакет: 200 запросов/);
   assert.match(report, /Баланс бота: 550 Stars/);
 });
 
