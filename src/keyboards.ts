@@ -28,8 +28,7 @@ export function resultMenu(): InlineKeyboard {
 
 export function visualResultMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Сохранить", "action:favorite")
-    .text("👤 Моё", "menu:profile");
+    .text("📷 Новое фото", "visual:new-photo");
 }
 
 export function refinementsMenu(): InlineKeyboard {

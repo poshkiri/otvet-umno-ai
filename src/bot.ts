@@ -544,6 +544,16 @@ export function createBot(
     await ctx.answerCallbackQuery("Сохранено в шаблоны ⭐");
   });
 
+  bot.callbackQuery("visual:new-photo", async (ctx) => {
+    delete ctx.session.visualResponseId;
+    delete ctx.session.lastSource;
+    delete ctx.session.lastResult;
+    ctx.session.awaitingInput = false;
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup();
+    await ctx.reply("Отправь новую фотографию через камеру или скрепку возле поля сообщения.");
+  });
+
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
     if (ctx.session.visualResponseId) {
@@ -833,7 +843,8 @@ async function replyResult(ctx: BotContext, result: string): Promise<void> {
 }
 
 async function replyVisualResult(ctx: BotContext, result: string): Promise<void> {
-  const chunks = splitLongMessage(result);
+  const text = `${result}\n\nМожешь задать вопрос по этой фотографии или отправить новую.`;
+  const chunks = splitLongMessage(text);
   for (let index = 0; index < chunks.length; index += 1) {
     await ctx.reply(
       chunks[index]!,
