@@ -59,6 +59,7 @@ export function profileMenu(): InlineKeyboard {
     .text("⭐ Plus и запросы", "menu:tariffs").row()
     .text("🕘 История", "menu:history")
     .text("🔖 Сохранённое", "menu:favorites").row()
+    .text("👥 Пригласить друга", "menu:invite").row()
     .text("🧾 Мои покупки", "menu:payments").row()
     .text("← В меню", "menu:main");
 }

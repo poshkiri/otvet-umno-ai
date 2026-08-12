@@ -47,7 +47,7 @@ export function formatBusinessReport(stats: BusinessStats, starBalance?: number)
 
 export function formatAcquisitionReport(items: AcquisitionStats[]): string {
   if (items.length === 0) {
-    return "📣 Источники\n\nДанных пока нет. Используй ссылки вида:\nt.me/OtvetUmnoAI_bot?start=instagram";
+    return "📣 Источники\n\nДанных пока нет. Используй ссылки вида:\nt.me/USERNAME?start=instagram";
   }
   return [
     "📣 Источники пользователей",

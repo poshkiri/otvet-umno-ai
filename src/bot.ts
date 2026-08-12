@@ -694,6 +694,39 @@ export function createBot(
     );
   });
 
+  bot.callbackQuery("menu:invite", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const referralUrl = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
+    const shareText = [
+      "Нашёл удобного AI-помощника — Пойми AI ✨",
+      "",
+      "📸 Объясняет фото, товары и скриншоты",
+      "🎙 Понимает голосовые вопросы",
+      "🎓 Помогает с учёбой и сложными темами",
+      "✍️ Пишет и переводит тексты",
+      "🎨 Создаёт картинки",
+      "",
+      "Попробуй — первые запросы бесплатные.",
+    ].join("\n");
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralUrl)}&text=${encodeURIComponent(shareText)}`;
+    track(ctx.from.id, "referral_share_opened");
+    await editOrReplyMenu(
+      ctx,
+      [
+        "👥 Пригласить друга",
+        "",
+        "Отправь другу готовое сообщение о Пойми AI. В нём будет твоя персональная ссылка.",
+        "",
+        "Когда человек запустит бот по ссылке, приглашение сохранится в статистике.",
+        "",
+        `Твоя ссылка:\n${referralUrl}`,
+      ].join("\n"),
+      new InlineKeyboard()
+        .url("📤 Отправить другу", shareUrl).row()
+        .text("← В кабинет", "menu:profile"),
+    );
+  });
+
   bot.callbackQuery("menu:balance", async (ctx) => {
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
