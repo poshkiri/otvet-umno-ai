@@ -69,6 +69,10 @@ export function imageResultMenu(): InlineKeyboard {
   return new InlineKeyboard().text("🎨 Создать ещё", "image:again");
 }
 
+export function imageEditResultMenu(): InlineKeyboard {
+  return new InlineKeyboard().text("🎨 Изменить ещё", "image:edit-again");
+}
+
 const QUICK_CATEGORIES: Partial<Record<FlowId, CategoryId>> = {
   analyze: "auto",
   compose: "auto",

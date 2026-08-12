@@ -935,7 +935,7 @@ export class BotDatabase {
       photoRequests: eventCountForPeriod("generation_photo"),
       textRequests: eventCountForPeriod("generation_text"),
       voiceRequests: eventCountForPeriod("generation_voice"),
-      createdImages: eventCountForPeriod("image_created"),
+      createdImages: eventCountForPeriod("image_created") + eventCountForPeriod("image_edited"),
       activeSubscriptions,
       purchases,
       payingUsers,

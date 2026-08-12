@@ -42,6 +42,8 @@ export interface BotSession {
   lastResult?: string;
   visualResponseId?: string;
   awaitingImagePrompt?: boolean;
+  awaitingImageEdit?: boolean;
+  visualSources?: Array<{ fileId: string; mimeType: string }>;
 }
 
 export interface UserAccess {

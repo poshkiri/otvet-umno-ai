@@ -136,6 +136,39 @@ export class AiService {
     });
   }
 
+  async editImage(
+    images: VisualInput[],
+    prompt: string,
+    telegramId: number,
+  ): Promise<Uint8Array> {
+    if (images.length === 0) throw new Error("Не передано фото для изменения");
+    return this.imageLimiter.run(async () => {
+      const files = await Promise.all(images.map((image, index) => toFile(
+        image.data,
+        `source-${index + 1}.${imageExtension(image.mimeType)}`,
+        { type: image.mimeType },
+      )));
+      const response = await this.client.images.edit({
+        model: this.imageModel,
+        image: files,
+        prompt: [
+          "Отредактируй именно присланное изображение по просьбе пользователя.",
+          "Сохрани узнаваемые черты лица, причёску, позу, пропорции человека и общую композицию, если пользователь не просит изменить их.",
+          "Не добавляй новых людей и не меняй личность человека.",
+          `Просьба пользователя: ${prompt.trim()}`,
+        ].join("\n"),
+        size: "1024x1024",
+        quality: "medium",
+        output_format: "png",
+        n: 1,
+        user: String(telegramId),
+      }, { timeout: 120_000, maxRetries: 1 });
+      const encoded = response.data?.[0]?.b64_json;
+      if (!encoded) throw new Error("AI не вернул изменённое изображение");
+      return Buffer.from(encoded, "base64");
+    });
+  }
+
   async refine(refinement: RefinementId, source: string, previousResult: string): Promise<string> {
     return this.limiter.run(async () => {
       const response = await this.client.responses.create({
@@ -152,4 +185,10 @@ export class AiService {
     if (!result) throw new Error("AI вернул пустой ответ");
     return result;
   }
+}
+
+function imageExtension(mimeType: string): "png" | "webp" | "jpg" {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  return "jpg";
 }

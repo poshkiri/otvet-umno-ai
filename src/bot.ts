@@ -7,6 +7,7 @@ import {
   categoryMenu,
   mainMenu,
   imageResultMenu,
+  imageEditResultMenu,
   profileMenu,
   quickCategory,
   refinementsMenu,
@@ -456,6 +457,7 @@ export function createBot(
   bot.callbackQuery("menu:main", async (ctx) => {
     ctx.session.awaitingInput = false;
     ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", { reply_markup: mainMenu() });
   });
@@ -682,6 +684,7 @@ export function createBot(
     delete ctx.session.visualResponseId;
     delete ctx.session.lastSource;
     delete ctx.session.lastResult;
+    delete ctx.session.visualSources;
     ctx.session.awaitingInput = false;
     await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup();
@@ -690,6 +693,7 @@ export function createBot(
 
   bot.callbackQuery(["image:create", "image:again"], async (ctx) => {
     ctx.session.awaitingImagePrompt = true;
+    ctx.session.awaitingImageEdit = false;
     delete ctx.session.visualResponseId;
     await ctx.answerCallbackQuery();
     await ctx.reply("Что нарисовать? Опиши сюжет, стиль и важные детали одним сообщением.", {
@@ -697,8 +701,22 @@ export function createBot(
     });
   });
 
+  bot.callbackQuery("image:edit-again", async (ctx) => {
+    if (!ctx.session.visualSources?.length) {
+      await ctx.answerCallbackQuery("Сначала отправь фото");
+      return;
+    }
+    ctx.session.awaitingImageEdit = true;
+    ctx.session.awaitingImagePrompt = false;
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Что ещё изменить на этой картинке? Напиши одним сообщением.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
+  });
+
   bot.callbackQuery("image:cancel", async (ctx) => {
     ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery("Отменено");
     await ctx.editMessageText("Отправь фото, текст или голосовое прямо в чат.", {
       reply_markup: mainMenu(),
@@ -707,6 +725,17 @@ export function createBot(
 
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
+    const editPrompt = ctx.session.awaitingImageEdit
+      ? ctx.message.text.trim()
+      : extractImageEditPrompt(ctx.message.text);
+    if (editPrompt && ctx.session.visualSources?.length) {
+      ctx.session.awaitingImageEdit = false;
+      await editImageForUser(
+        ctx, config, db, ai, ctx.session.visualSources, editPrompt,
+        imageLimits, resourceLimiter, track,
+      );
+      return;
+    }
     const imagePrompt = extractImagePrompt(ctx.message.text, ctx.session.awaitingImagePrompt);
     if (imagePrompt !== undefined) {
       ctx.session.awaitingImagePrompt = false;
@@ -785,19 +814,34 @@ export function createBot(
       await ctx.reply("Голосовое сообщение слишком большое. Максимальный размер — 10 МБ.");
       return;
     }
-    const reservation = await reserveForUser(ctx, db, track);
-    if (!reservation) return;
     try {
       await ctx.api.sendChatAction(ctx.chat.id, "typing");
-      const { transcript, result } = await resourceLimiter.run(async () => {
+      const transcript = await resourceLimiter.run(async () => {
         const audio = await downloadTelegramFile(
           ctx, config.BOT_TOKEN, ctx.message.voice.file_id, MAX_VOICE_BYTES,
         );
         const transcript = await ai.transcribe(audio, "voice.ogg");
         if (!transcript) throw new Error("Не удалось распознать голос");
-        const result = await ai.answerGeneral(transcript);
-        return { transcript, result };
+        return transcript;
       });
+      const editPrompt = extractImageEditPrompt(transcript);
+      if (editPrompt && ctx.session.visualSources?.length) {
+        await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
+        await editImageForUser(
+          ctx, config, db, ai, ctx.session.visualSources, editPrompt,
+          imageLimits, resourceLimiter, track,
+        );
+        return;
+      }
+      const reservation = await reserveForUser(ctx, db, track);
+      if (!reservation) return;
+      let result: string;
+      try {
+        result = await ai.answerGeneral(transcript);
+      } catch (error) {
+        db.releaseRequest(reservation);
+        throw error;
+      }
       ctx.session.flow = "analyze";
       ctx.session.category = "auto";
       finishGeneration(ctx, db, transcript, result, reservation);
@@ -805,7 +849,6 @@ export function createBot(
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
     } catch (error) {
-      db.releaseRequest(reservation);
       await handleError(ctx, error);
     }
   });
@@ -937,10 +980,58 @@ async function generateImageForUser(
     track(ctx.from!.id, "image_created", reservation.allowance.tier, {
       tier: reservation.allowance.tier,
     });
-    await ctx.replyWithPhoto(new InputFile(image, "otvet-umno.png"), {
+    const sent = await ctx.replyWithPhoto(new InputFile(image, "otvet-umno.png"), {
       caption: `Готово 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
       reply_markup: imageResultMenu(),
     });
+    const photo = sent.photo.at(-1);
+    if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
+  } catch (error) {
+    db.releaseImageGeneration(reservation.id);
+    await handleError(ctx, error);
+  }
+}
+
+async function editImageForUser(
+  ctx: BotContext,
+  config: AppConfig,
+  db: BotDatabase,
+  ai: AiService,
+  sources: Array<{ fileId: string; mimeType: string }>,
+  prompt: string,
+  limits: { plus: number; pro: number; global: number; windowSeconds: number },
+  resourceLimiter: Semaphore,
+  track: TrackEvent,
+): Promise<void> {
+  const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
+  if (!("id" in reservation)) {
+    track(ctx.from!.id, "image_limit_shown", reservation.reason);
+    await ctx.reply(imageLimitMessage(reservation), {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
+    });
+    return;
+  }
+  try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "upload_photo");
+    const output = await resourceLimiter.run(async () => {
+      const images = await Promise.all(sources.slice(0, 4).map(async (source) => ({
+        data: await downloadTelegramFile(ctx, config.BOT_TOKEN, source.fileId, MAX_IMAGE_BYTES),
+        mimeType: source.mimeType,
+      })));
+      return ai.editImage(images, prompt, ctx.from!.id);
+    });
+    db.completeImageGeneration(reservation.id);
+    track(ctx.from!.id, "image_edited", reservation.allowance.tier, {
+      tier: reservation.allowance.tier,
+      source_count: sources.length,
+    });
+    const sent = await ctx.replyWithPhoto(new InputFile(output, "otvet-umno-edit.png"), {
+      caption: `Готово, изменил исходное фото 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
+      reply_markup: imageEditResultMenu(),
+    });
+    const photo = sent.photo.at(-1);
+    if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
+    delete ctx.session.visualResponseId;
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
     await handleError(ctx, error);
@@ -979,11 +1070,28 @@ async function processVisualItems(
     await ctx.reply("Одно из изображений больше 8 МБ. Уменьши размер и попробуй снова.");
     return;
   }
+  const caption = items.find((item) => item.caption?.trim())?.caption;
+  const editPrompt = caption ? extractImageEditPrompt(caption) : undefined;
+  if (editPrompt) {
+    await editImageForUser(
+      ctx, config, db, ai,
+      items.map((item) => ({ fileId: item.fileId, mimeType: item.mimeType })),
+      editPrompt,
+      {
+        plus: config.PLUS_IMAGE_LIMIT,
+        pro: config.PRO_IMAGE_LIMIT,
+        global: config.GLOBAL_IMAGE_LIMIT,
+        windowSeconds: config.IMAGE_WINDOW_HOURS * 60 * 60,
+      },
+      resourceLimiter,
+      track,
+    );
+    return;
+  }
   const reservation = await reserveForUser(ctx, db, track);
   if (!reservation) return;
   try {
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
-    const caption = items.find((item) => item.caption?.trim())?.caption;
     const visual = await resourceLimiter.run(async () => {
       const images: Array<{ data: Uint8Array; mimeType: string }> = [];
       let totalBytes = 0;
@@ -1012,6 +1120,10 @@ async function processVisualItems(
       image_count: items.length,
     });
     ctx.session.visualResponseId = visual.responseId;
+    ctx.session.visualSources = items.map((item) => ({
+      fileId: item.fileId,
+      mimeType: item.mimeType,
+    }));
     await replyVisualResult(ctx, cleanResult);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -1128,6 +1240,14 @@ function extractImagePrompt(text: string, awaiting: boolean | undefined): string
   if (awaiting) return text.trim();
   const match = text.trim().match(/^(?:пожалуйста[, ]+)?(?:нарисуй|создай\s+(?:мне\s+)?(?:картин(?:у|ку)|изображение)|сгенерируй\s+(?:мне\s+)?(?:картин(?:у|ку)|изображение))\s*[:,-]?\s*(.*)$/iu);
   return match?.[1]?.trim();
+}
+
+export function extractImageEditPrompt(text: string): string | undefined {
+  const value = text.trim();
+  if (!value) return undefined;
+  const editIntent = /^(?:пожалуйста[, ]+)?(?:сделай|преврати|измени|обработай|стилизуй|перерисуй|замени|убери|удали|добавь)(?:\s|$)/iu;
+  const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
+  return editIntent.test(value) || styleIntent.test(value) ? value : undefined;
 }
 
 function formatWait(resetAt: number): string {
