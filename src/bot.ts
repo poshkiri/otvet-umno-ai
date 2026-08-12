@@ -243,7 +243,15 @@ export function createBot(
   });
 
   bot.command("start", async (ctx) => {
-    if (!ctx.from || !db.claimAction(ctx.from.id, "start", 8)) return;
+    if (!ctx.from) return;
+    if (!db.claimAction(ctx.from.id, "start", 30)) {
+      try {
+        await ctx.deleteMessage();
+      } catch (error) {
+        console.warn("Could not delete duplicate /start", error);
+      }
+      return;
+    }
     const source = sanitizeStartSource(ctx.match);
     db.recordAcquisition(ctx.from.id, source);
     track(ctx.from.id, "bot_started", source, { source });

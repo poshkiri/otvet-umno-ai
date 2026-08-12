@@ -89,13 +89,13 @@ test("database rejects a duplicate Telegram update", () => {
   db.close();
 });
 
-test("action cooldown suppresses repeated start events", () => {
+test("action cooldown suppresses repeated start events for the full start protection window", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 5);
 
-  assert.equal(db.claimAction(777, "start", 8), true);
-  assert.equal(db.claimAction(777, "start", 8), false);
-  assert.equal(db.claimAction(777, "another-action", 8), true);
+  assert.equal(db.claimAction(777, "start", 30), true);
+  assert.equal(db.claimAction(777, "start", 30), false);
+  assert.equal(db.claimAction(777, "another-action", 30), true);
   db.close();
 });
 
