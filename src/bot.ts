@@ -217,7 +217,7 @@ export function createBot(
         period_end: periodEnd,
       });
       await ctx.reply(
-        `Plus активирован ✅\n\nДоступно ${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+        `Plus активирован ✅\n\nДоступно ${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней. Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
         { reply_markup: mainMenu() },
       );
       if (config.ADMIN_TELEGRAM_ID) {
@@ -477,10 +477,11 @@ export function createBot(
         "",
         subscription.active
           ? `Plus активен до ${formatUnixDate(subscription.periodEnd!)}${subscription.autoRenew ? " · автопродление включено" : " · автопродление выключено"}`
-          : `Plus — ${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней за ${config.PLUS_SUBSCRIPTION_STARS} Stars`,
+          : `Plus — ${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней за ${config.PLUS_SUBSCRIPTION_STARS} Stars`,
         ...(subscriptionRequests.active
-          ? [`Осталось AI-запросов Plus: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit}`]
+          ? [`Осталось AI-единиц Plus: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit}`]
           : []),
+        "Ответ — 1 · картинка — 2 · изменение фото — 3 AI-запроса",
         "",
         "Разовые пакеты для ответов и разбора фото:",
         `Старт — ${CREDIT_PACKAGES.start.credits} запросов за ${CREDIT_PACKAGES.start.stars} Stars`,
@@ -504,14 +505,14 @@ export function createBot(
     });
     const invoiceUrl = await ctx.api.raw.createInvoiceLink({
       title: "ОтветьУмно Plus",
-      description: `${config.PLUS_REQUEST_LIMIT} AI-запросов и ${config.PLUS_IMAGE_LIMIT} AI-картинок на 30 дней.`,
+      description: `${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} AI-картинок на 30 дней.`,
       payload: createSubscriptionPayload(ctx.from.id),
       currency: "XTR",
       prices: [{ label: "Plus на 30 дней", amount: config.PLUS_SUBSCRIPTION_STARS }],
       subscription_period: PLUS_SUBSCRIPTION_PERIOD_SECONDS,
     });
     await ctx.reply(
-      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-запросов + ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
+      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
       { reply_markup: new InlineKeyboard().url("Открыть оплату", invoiceUrl) },
     );
   });
@@ -978,8 +979,19 @@ async function generateImageForUser(
   limits: { plus: number; pro: number; global: number; windowSeconds: number },
   track: TrackEvent,
 ): Promise<void> {
+  const allowance = db.getImageAllowance(ctx.from!.id, limits);
+  const aiReservation = allowance.tier === "plus"
+    ? db.reserveSubscriptionUnits(ctx.from!.id, 2)
+    : undefined;
+  if (allowance.tier === "plus" && !aiReservation) {
+    await ctx.reply("Месячный AI-баланс Plus закончился. Новые единицы появятся после обновления периода подписки.", {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
+    });
+    return;
+  }
   const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
   if (!("id" in reservation)) {
+    if (aiReservation) db.releaseRequest(aiReservation.id);
     track(ctx.from!.id, "image_limit_shown", reservation.reason);
     await ctx.reply(imageLimitMessage(reservation), {
       reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
@@ -990,6 +1002,7 @@ async function generateImageForUser(
     await ctx.api.sendChatAction(ctx.chat!.id, "upload_photo");
     const image = await ai.generateImage(prompt, ctx.from!.id);
     db.completeImageGeneration(reservation.id);
+    if (aiReservation) db.commitRequest(aiReservation.id);
     track(ctx.from!.id, "image_created", reservation.allowance.tier, {
       tier: reservation.allowance.tier,
     });
@@ -1001,6 +1014,7 @@ async function generateImageForUser(
     if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
+    if (aiReservation) db.releaseRequest(aiReservation.id);
     await handleError(ctx, error);
   }
 }
@@ -1016,8 +1030,19 @@ async function editImageForUser(
   resourceLimiter: Semaphore,
   track: TrackEvent,
 ): Promise<void> {
+  const allowance = db.getImageAllowance(ctx.from!.id, limits);
+  const aiReservation = allowance.tier === "plus"
+    ? db.reserveSubscriptionUnits(ctx.from!.id, 3)
+    : undefined;
+  if (allowance.tier === "plus" && !aiReservation) {
+    await ctx.reply("Месячный AI-баланс Plus закончился. Новые единицы появятся после обновления периода подписки.", {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
+    });
+    return;
+  }
   const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
   if (!("id" in reservation)) {
+    if (aiReservation) db.releaseRequest(aiReservation.id);
     track(ctx.from!.id, "image_limit_shown", reservation.reason);
     await ctx.reply(imageLimitMessage(reservation), {
       reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
@@ -1034,6 +1059,7 @@ async function editImageForUser(
       return ai.editImage(images, prompt, ctx.from!.id);
     });
     db.completeImageGeneration(reservation.id);
+    if (aiReservation) db.commitRequest(aiReservation.id);
     track(ctx.from!.id, "image_edited", reservation.allowance.tier, {
       tier: reservation.allowance.tier,
       source_count: sources.length,
@@ -1047,6 +1073,7 @@ async function editImageForUser(
     delete ctx.session.visualResponseId;
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
+    if (aiReservation) db.releaseRequest(aiReservation.id);
     await handleError(ctx, error);
   }
 }

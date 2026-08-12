@@ -225,6 +225,11 @@ test("Plus request allowance is monthly, atomic and restores failed requests", (
   assert.equal(db.releaseRequest(first.id), true);
   assert.equal(db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now).remaining, 2);
 
+  const weighted = db.reserveSubscriptionUnits(id, 2, 2_592_000, now);
+  assert.ok(weighted);
+  assert.equal(db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now).remaining, 0);
+  assert.equal(db.releaseRequest(weighted.id), true);
+
   assert.ok(db.reserveRequest(id, 2_592_000, now));
   assert.ok(db.reserveRequest(id, 2_592_000, now + 1));
   assert.equal(db.reserveRequest(id, 2_592_000, now + 2), undefined);

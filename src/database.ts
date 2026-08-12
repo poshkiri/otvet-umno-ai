@@ -166,6 +166,7 @@ export class BotDatabase {
       CREATE TABLE IF NOT EXISTS subscription_request_usage (
         id TEXT PRIMARY KEY,
         telegram_id INTEGER NOT NULL,
+        units INTEGER NOT NULL DEFAULT 1 CHECK (units > 0),
         status TEXT NOT NULL DEFAULT 'reserved'
           CHECK (status IN ('reserved', 'consumed', 'released')),
         created_at INTEGER NOT NULL,
@@ -201,6 +202,14 @@ export class BotDatabase {
     const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
     if (!userColumns.some((column) => column.name === "free_image_used")) {
       this.db.exec("ALTER TABLE users ADD COLUMN free_image_used INTEGER NOT NULL DEFAULT 0");
+    }
+    const usageColumns = this.db.prepare(
+      "PRAGMA table_info(subscription_request_usage)",
+    ).all() as Array<{ name: string }>;
+    if (!usageColumns.some((column) => column.name === "units")) {
+      this.db.exec(
+        "ALTER TABLE subscription_request_usage ADD COLUMN units INTEGER NOT NULL DEFAULT 1 CHECK (units > 0)",
+      );
     }
   }
 
@@ -323,14 +332,14 @@ export class BotDatabase {
         ).run(telegramId);
       } else if (this.subscriptionLimit > 0 && this.getSubscriptionAccess(telegramId, now).active) {
         const usage = this.db.prepare(`
-          SELECT COUNT(*) AS used FROM subscription_request_usage
+          SELECT COALESCE(SUM(units), 0) AS used FROM subscription_request_usage
           WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
         `).get(telegramId, now - windowSeconds) as { used: number };
         if (usage.used < this.subscriptionLimit) {
           const id = `subscription:${randomUUID()}`;
           this.db.prepare(`
-            INSERT INTO subscription_request_usage (id, telegram_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO subscription_request_usage (id, telegram_id, units, created_at, updated_at)
+            VALUES (?, ?, 1, ?, ?)
           `).run(id, telegramId, now, now);
           this.db.exec("COMMIT");
           return { id };
@@ -403,6 +412,40 @@ export class BotDatabase {
       WHERE id = ? AND status = 'reserved'
     `).run(reservationId);
     return result.changes > 0;
+  }
+
+  reserveSubscriptionUnits(
+    telegramId: number,
+    units: number,
+    windowSeconds = 30 * 24 * 60 * 60,
+    now = Math.floor(Date.now() / 1000),
+  ): RequestReservation | undefined {
+    if (!Number.isInteger(units) || units < 1) throw new Error("Subscription units must be positive");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!this.getSubscriptionAccess(telegramId, now).active) {
+        this.db.exec("ROLLBACK");
+        return undefined;
+      }
+      const usage = this.db.prepare(`
+        SELECT COALESCE(SUM(units), 0) AS used FROM subscription_request_usage
+        WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
+      `).get(telegramId, now - windowSeconds) as { used: number };
+      if (usage.used + units > this.subscriptionLimit) {
+        this.db.exec("ROLLBACK");
+        return undefined;
+      }
+      const id = `subscription:${randomUUID()}`;
+      this.db.prepare(`
+        INSERT INTO subscription_request_usage (id, telegram_id, units, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(id, telegramId, units, now, now);
+      this.db.exec("COMMIT");
+      return { id };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   releaseRequest(reservationId: string): boolean {
@@ -486,7 +529,7 @@ export class BotDatabase {
     const access = this.getSubscriptionAccess(telegramId, now);
     if (!access.active) return { active: false, used: 0, limit, remaining: 0 };
     const usage = this.db.prepare(`
-      SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM subscription_request_usage
+      SELECT COALESCE(SUM(units), 0) AS used, MIN(created_at) AS oldest FROM subscription_request_usage
       WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
     `).get(telegramId, now - windowSeconds) as { used: number; oldest: number | null };
     return {
