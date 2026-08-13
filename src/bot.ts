@@ -5,10 +5,12 @@ import { AiService } from "./ai.js";
 import { BotDatabase } from "./database.js";
 import {
   categoryMenu,
+  creditPacksMenu,
   mainMenu,
   imageResultMenu,
   imageEditResultMenu,
   profileMenu,
+  paywallMenu,
   quickCategory,
   refinementsMenu,
   resultMenu,
@@ -373,6 +375,7 @@ export function createBot(
 
   bot.callbackQuery("menu:capabilities", async (ctx) => {
     await ctx.answerCallbackQuery();
+    await clearCallbackKeyboard(ctx);
     await ctx.reply([
       "🤖 Что умеет Пойми AI",
       "",
@@ -563,8 +566,28 @@ export function createBot(
     );
   });
 
+  bot.callbackQuery("menu:credit-packs", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      [
+        "📦 Дополнительные запросы",
+        "",
+        "Выбери подходящий пакет. Купленные запросы не сгорают.",
+      ].join("\n"),
+      creditPacksMenu(),
+    );
+  });
+
+  bot.callbackQuery("menu:paywall", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await clearCallbackKeyboard(ctx);
+    await replyPaywall(ctx);
+  });
+
   bot.callbackQuery("subscribe:plus", async (ctx) => {
     await ctx.answerCallbackQuery();
+    await clearCallbackKeyboard(ctx);
     track(ctx.from.id, "subscription_invoice_created", "plus", {
       stars: config.PLUS_SUBSCRIPTION_STARS,
     });
@@ -630,6 +653,7 @@ export function createBot(
       stars: selected.stars,
     });
     await ctx.answerCallbackQuery();
+    await clearCallbackKeyboard(ctx);
     await ctx.replyWithInvoice(
       `Пакет «${selected.title}»`,
       `${selected.credits} запросов к Пойми AI. Запросы не сгорают.`,
@@ -816,10 +840,7 @@ export function createBot(
     if (!reservation) {
       track(ctx.from.id, "paywall_shown", "refinement");
       await ctx.answerCallbackQuery("Лимит закончился");
-      await ctx.reply(
-        "Бесплатные запросы закончились. В тарифах можно подключить Plus или купить дополнительные запросы.",
-        { reply_markup: mainMenu() },
-      );
+      await replyPaywall(ctx);
       return;
     }
     await ctx.answerCallbackQuery("Переделываю…");
@@ -1016,6 +1037,7 @@ export function createBot(
       track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
+      await notifyLastFreeRequest(ctx, db);
     } catch (error) {
       db.releaseRequest(reservation);
       await handleError(ctx, error);
@@ -1071,9 +1093,7 @@ async function reserveForUser(
   const reservation = db.reserveRequest(ctx.from!.id);
   if (reservation) return reservation.id;
   track?.(ctx.from!.id, "paywall_shown");
-  await ctx.reply("Бесплатные запросы закончились. Подключи Plus или купи дополнительные запросы.", {
-    reply_markup: mainMenu(),
-  });
+  await replyPaywall(ctx);
   return undefined;
 }
 
@@ -1096,6 +1116,7 @@ async function generateForUser(
       category: ctx.session.category,
     });
     await replyResult(ctx, result);
+    await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
     await handleError(ctx, error);
@@ -1120,6 +1141,7 @@ async function answerGeneralForUser(
     finishGeneration(ctx, db, source, result, reservation);
     track(ctx.from!.id, `generation_${inputType}`, "general", { input_type: inputType });
     await replyResult(ctx, result);
+    await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
     await handleError(ctx, error);
@@ -1320,6 +1342,7 @@ async function processVisualItems(
       mimeType: item.mimeType,
     }));
     await replyVisualResult(ctx, cleanResult);
+    await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
     await handleError(ctx, error);
@@ -1349,6 +1372,7 @@ async function continueVisualConversation(
       input_type: "visual_followup",
     });
     await replyVisualResult(ctx, cleanResult);
+    await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
     await handleError(ctx, error);
@@ -1423,12 +1447,44 @@ async function editOrReplyMenu(
   text: string,
   keyboard: InlineKeyboard,
 ): Promise<void> {
-  const message = ctx.callbackQuery?.message;
-  if (message && "text" in message) {
-    await ctx.editMessageText(text, { reply_markup: keyboard });
-    return;
-  }
+  await clearCallbackKeyboard(ctx);
   await ctx.reply(text, { reply_markup: keyboard });
+}
+
+async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
+  if (!ctx.callbackQuery?.message) return;
+  try {
+    await ctx.editMessageReplyMarkup();
+  } catch {
+    // The source message may already have no keyboard.
+  }
+}
+
+async function replyPaywall(ctx: BotContext): Promise<void> {
+  await ctx.reply(
+    [
+      "Бесплатные запросы закончились",
+      "",
+      "Хочешь продолжить пользоваться Пойми AI?",
+      "",
+      "⭐ Plus — доступ на 30 дней",
+      "📦 Разовые запросы — не сгорают",
+    ].join("\n"),
+    { reply_markup: paywallMenu() },
+  );
+}
+
+async function notifyLastFreeRequest(ctx: BotContext, db: BotDatabase): Promise<void> {
+  if (!ctx.from) return;
+  const access = db.getAccess(ctx.from.id);
+  if (
+    access.plan !== "pro"
+    && access.credits === 0
+    && access.freeLimit - access.freeUsed === 1
+    && !db.getSubscriptionAccess(ctx.from.id).active
+  ) {
+    await ctx.reply("Остался 1 бесплатный запрос.");
+  }
 }
 
 function imageAllowanceText(allowance: ImageAllowance): string {

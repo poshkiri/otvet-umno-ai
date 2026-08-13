@@ -8,6 +8,29 @@ export function mainMenu(): InlineKeyboard {
     .text("👤 Мой кабинет", "menu:profile");
 }
 
+export function paywallMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("⭐ Подключить Plus", "subscribe:plus").row()
+    .text("📦 Купить запросы", "menu:credit-packs");
+}
+
+export function creditPacksMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(
+      `${CREDIT_PACKAGES.start.credits} запросов · ${CREDIT_PACKAGES.start.stars} ⭐`,
+      "buy:start",
+    ).row()
+    .text(
+      `${CREDIT_PACKAGES.plus.credits} запросов · ${CREDIT_PACKAGES.plus.stars} ⭐`,
+      "buy:plus",
+    ).row()
+    .text(
+      `${CREDIT_PACKAGES.pro.credits} запросов · ${CREDIT_PACKAGES.pro.stars} ⭐`,
+      "buy:pro",
+    ).row()
+    .text("← Назад", "menu:paywall");
+}
+
 export function categoryMenu(flow: FlowId): InlineKeyboard {
   return new InlineKeyboard()
     .text("💼 Деловая", `category:${flow}:business`)

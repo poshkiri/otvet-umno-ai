@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  creditPacksMenu,
   mainMenu,
+  paywallMenu,
   profileMenu,
   tariffsMenu,
   visualResultMenu,
@@ -13,6 +15,22 @@ test("main menu keeps the primary actions simple", () => {
       { text: "🤖 Что умеет бот", callback_data: "menu:capabilities" },
       { text: "👤 Мой кабинет", callback_data: "menu:profile" },
     ],
+  ]);
+});
+
+test("paywall offers only subscription or request packs", () => {
+  assert.deepEqual(paywallMenu().inline_keyboard, [
+    [{ text: "⭐ Подключить Plus", callback_data: "subscribe:plus" }],
+    [{ text: "📦 Купить запросы", callback_data: "menu:credit-packs" }],
+  ]);
+});
+
+test("credit packs stay on a separate screen", () => {
+  assert.deepEqual(creditPacksMenu().inline_keyboard, [
+    [{ text: "50 запросов · 149 ⭐", callback_data: "buy:start" }],
+    [{ text: "200 запросов · 549 ⭐", callback_data: "buy:plus" }],
+    [{ text: "500 запросов · 1299 ⭐", callback_data: "buy:pro" }],
+    [{ text: "← Назад", callback_data: "menu:paywall" }],
   ]);
 });
 
