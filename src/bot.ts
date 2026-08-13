@@ -4,7 +4,6 @@ import type { AppConfig } from "./config.js";
 import { AiService } from "./ai.js";
 import { BotDatabase } from "./database.js";
 import {
-  capabilitiesMenu,
   categoryMenu,
   mainMenu,
   imageResultMenu,
@@ -367,34 +366,24 @@ export function createBot(
   bot.command("menu", async (ctx) => {
     ctx.session.awaitingInput = false;
     await ctx.reply(
-      "Напиши вопрос, отправь фото, документ или голосовое. Чтобы создать картинку, нажми кнопку ниже.",
+      "Напиши вопрос или отправь фото, документ либо голосовое. Чтобы создать картинку, просто напиши: «Нарисуй…»",
       { reply_markup: mainMenu() },
     );
   });
 
   bot.callbackQuery("menu:capabilities", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await editOrReplyMenu(
-      ctx,
-      [
-        "✨ Что умеет Пойми AI",
-        "",
-        "📸 Фото и скриншоты",
-        "Распознаю товары, этикетки, документы, ошибки и учебные задания.",
-        "",
-        "💬 Текст и голос",
-        "Отвечаю на вопросы, объясняю сложное, пишу и перевожу тексты.",
-        "",
-        "🎓 Учёба",
-        "Решаю математику и другие задачи по шагам.",
-        "",
-        "🎨 Картинки",
-        "Создаю изображения по описанию и изменяю присланные фотографии.",
-        "",
-        "Просто отправь сообщение или файл — режим выбирать не нужно.",
-      ].join("\n"),
-      capabilitiesMenu(),
-    );
+    await ctx.reply([
+      "🤖 Что умеет Пойми AI",
+      "",
+      "📸 Объясняет фото, товары и скриншоты",
+      "🎙 Понимает голосовые сообщения",
+      "🎓 Помогает с учёбой и задачами",
+      "✍️ Пишет и переводит тексты",
+      "🎨 Создаёт и изменяет изображения",
+      "",
+      "Просто напиши или отправь файл — режим выбирать не нужно.",
+    ].join("\n"));
   });
 
   bot.command("image", async (ctx) => {

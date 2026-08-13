@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  capabilitiesMenu,
   mainMenu,
   profileMenu,
   tariffsMenu,
@@ -10,19 +9,10 @@ import {
 
 test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
-    [{ text: "🎨 Создать картинку", callback_data: "image:create" }],
     [
-      { text: "✨ Возможности", callback_data: "menu:capabilities" },
+      { text: "🤖 Что умеет бот", callback_data: "menu:capabilities" },
       { text: "👤 Мой кабинет", callback_data: "menu:profile" },
     ],
-  ]);
-});
-
-test("capabilities menu leads to creation, account and main menu", () => {
-  assert.deepEqual(capabilitiesMenu().inline_keyboard, [
-    [{ text: "🎨 Создать картинку", callback_data: "image:create" }],
-    [{ text: "👤 Мой кабинет", callback_data: "menu:profile" }],
-    [{ text: "← В меню", callback_data: "menu:main" }],
   ]);
 });
 

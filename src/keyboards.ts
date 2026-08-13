@@ -4,16 +4,8 @@ import { CREDIT_PACKAGES } from "./payments.js";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🎨 Создать картинку", "image:create").row()
-    .text("✨ Возможности", "menu:capabilities")
+    .text("🤖 Что умеет бот", "menu:capabilities")
     .text("👤 Мой кабинет", "menu:profile");
-}
-
-export function capabilitiesMenu(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("🎨 Создать картинку", "image:create").row()
-    .text("👤 Мой кабинет", "menu:profile").row()
-    .text("← В меню", "menu:main");
 }
 
 export function categoryMenu(flow: FlowId): InlineKeyboard {
