@@ -1368,9 +1368,7 @@ async function continueVisualConversation(
 
 async function replyResult(ctx: BotContext, result: string): Promise<void> {
   const chunks = splitLongMessage(result);
-  for (let index = 0; index < chunks.length; index += 1) {
-    await ctx.reply(chunks[index]!, index === chunks.length - 1 ? { reply_markup: resultMenu() } : {});
-  }
+  for (const chunk of chunks) await ctx.reply(chunk);
 }
 
 async function replyVisualResult(ctx: BotContext, result: string): Promise<void> {
