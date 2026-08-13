@@ -373,10 +373,6 @@ export function createBot(
     );
   });
 
-  bot.callbackQuery("ui:transition", async (ctx) => {
-    await ctx.answerCallbackQuery("Открываю…");
-  });
-
   bot.callbackQuery("menu:capabilities", async (ctx) => {
     await ctx.answerCallbackQuery();
     await clearCallbackKeyboard(ctx);
@@ -1457,14 +1453,6 @@ async function editOrReplyMenu(
 
 async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
   if (!ctx.callbackQuery?.message) return;
-  try {
-    await ctx.editMessageReplyMarkup({
-      reply_markup: new InlineKeyboard().text("⏳ Открываю…", "ui:transition"),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 320));
-  } catch {
-    // Telegram may reject an intermediate update for an old message.
-  }
   try {
     await ctx.editMessageReplyMarkup();
   } catch {
