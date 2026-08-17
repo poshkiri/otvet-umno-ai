@@ -8,6 +8,18 @@ export interface SessionPayload {
   user: { firstName: string };
   access: AccessPayload;
   botUsername: string;
+  payments: {
+    plategaEnabled: boolean;
+    packages: Array<{ id: "start" | "plus" | "pro"; title: string; credits: number; rubles: number }>;
+    recent: Array<{
+      transactionId: string;
+      packageId: string;
+      credits: number;
+      amountRub: number;
+      status: "pending" | "confirmed" | "canceled" | "chargebacked";
+      createdAt: string;
+    }>;
+  };
   history: Array<{
     id: number;
     source: string;
@@ -67,4 +79,17 @@ export const miniAppApi = {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ conversationId, question }),
   }),
+  createPlategaPayment: (initData: string, packageId: string) => request<{
+    transactionId: string;
+    url: string;
+    status: "pending";
+  }>("/api/mini-app/payments/platega", initData, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ packageId }),
+  }),
+  plategaPayment: (initData: string, transactionId: string) => request<{
+    status: "pending" | "confirmed" | "canceled" | "chargebacked";
+    access: AccessPayload;
+  }>(`/api/mini-app/payments/platega/${encodeURIComponent(transactionId)}`, initData),
 };

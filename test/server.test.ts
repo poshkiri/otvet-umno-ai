@@ -9,6 +9,7 @@ import type { ProductAnalytics } from "../src/analytics.js";
 import type { AppConfig } from "../src/config.js";
 import { BotDatabase } from "../src/database.js";
 import { createAppServer } from "../src/server.js";
+import type { PlategaGateway, PlategaStatus } from "../src/platega.js";
 
 const token = "123456789:abcdefghijklmnopqrstuvwxyzABCDEFGHI";
 
@@ -48,6 +49,7 @@ function config(): AppConfig {
     DAILY_REPORT_HOUR: 10,
     PORT: 3_000,
     MINI_APP_AUTH_MAX_AGE_SECONDS: 86_400,
+    PLATEGA_API_URL: "https://app.platega.io",
   };
 }
 
@@ -114,6 +116,74 @@ test("Mini App text questions consume one request and appear in history", async 
   });
   assert.equal(session.statusCode, 200);
   assert.equal(session.json().history[0].source, "Что такое инфляция?");
+  await app.close();
+  db.close();
+});
+
+test("Platega callback verifies credentials and credits a payment exactly once", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "poymi-api-platega-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const ai = {} as AiService;
+  const analytics = { capture: () => undefined } as unknown as ProductAnalytics;
+  let remoteStatus: PlategaStatus = "PENDING";
+  const transactionId = "11111111-1111-4111-8111-111111111111";
+  const gateway: PlategaGateway = {
+    enabled: true,
+    createPayment: async () => ({
+      transactionId,
+      status: "PENDING",
+      url: "https://pay.platega.io/test",
+    }),
+    getTransaction: async () => ({
+      id: transactionId,
+      status: remoteStatus,
+      paymentDetails: { amount: 199, currency: "RUB" },
+    }),
+    verifyCallbackHeaders: (merchantId, secret) => merchantId === "merchant" && secret === "secret",
+  };
+  const appConfig = {
+    ...config(),
+    RENDER_EXTERNAL_URL: "https://poymi-ai.onrender.com",
+  };
+  const app = createAppServer(appConfig, db, ai, analytics, "OtvetUmnoAI_bot", gateway);
+  const telegramId = 7201;
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/mini-app/payments/platega",
+    headers: { "x-telegram-init-data": initData(telegramId) },
+    payload: { packageId: "start" },
+  });
+  assert.equal(created.statusCode, 200);
+  assert.equal(created.json().transactionId, transactionId);
+
+  remoteStatus = "CONFIRMED";
+  const rejected = await app.inject({
+    method: "POST",
+    url: "/api/payments/platega/callback",
+    headers: { "x-merchantid": "wrong", "x-secret": "wrong" },
+    payload: { id: transactionId, status: "CONFIRMED", amount: 199, currency: "RUB" },
+  });
+  assert.equal(rejected.statusCode, 401);
+  assert.equal(db.getAccess(telegramId).credits, 0);
+
+  for (let index = 0; index < 2; index += 1) {
+    const callback = await app.inject({
+      method: "POST",
+      url: "/api/payments/platega/callback",
+      headers: { "x-merchantid": "merchant", "x-secret": "secret" },
+      payload: { id: transactionId, status: "CONFIRMED", amount: 199, currency: "RUB" },
+    });
+    assert.equal(callback.statusCode, 200);
+  }
+  assert.equal(db.getAccess(telegramId).credits, 50);
+
+  const foreignStatus = await app.inject({
+    method: "GET",
+    url: `/api/mini-app/payments/platega/${transactionId}`,
+    headers: { "x-telegram-init-data": initData(7202) },
+  });
+  assert.equal(foreignStatus.statusCode, 404);
   await app.close();
   db.close();
 });

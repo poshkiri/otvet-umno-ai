@@ -55,3 +55,9 @@ services:
         value: Asia/Irkutsk
       - key: DAILY_REPORT_HOUR
         value: "10"
+      - key: PLATEGA_MERCHANT_ID
+        sync: false
+      - key: PLATEGA_SECRET
+        sync: false
+      - key: PLATEGA_API_URL
+        value: https://app.platega.io

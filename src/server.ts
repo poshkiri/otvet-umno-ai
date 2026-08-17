@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import Fastify, { type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
@@ -8,6 +9,8 @@ import type { AiService } from "./ai.js";
 import type { BotDatabase } from "./database.js";
 import type { ProductAnalytics } from "./analytics.js";
 import { cleanTelegramText } from "./utils.js";
+import { RUB_CREDIT_PACKAGES, isCreditPackageId } from "./payments.js";
+import { PlategaClient, type PlategaGateway, type PlategaStatus } from "./platega.js";
 import {
   TelegramWebAppAuthError,
   validateTelegramInitData,
@@ -26,12 +29,25 @@ interface AskBody {
   question?: string;
 }
 
+interface CreatePaymentBody {
+  packageId?: string;
+}
+
+interface PlategaCallbackBody {
+  id?: string;
+  amount?: number;
+  currency?: string;
+  status?: PlategaStatus;
+  payload?: string;
+}
+
 export function createAppServer(
   config: AppConfig,
   db: BotDatabase,
   ai: AiService,
   analytics: ProductAnalytics,
   botUsername: string,
+  platega: PlategaGateway = new PlategaClient(config),
 ) {
   const app = Fastify({ logger: true, bodyLimit: MAX_IMAGE_BYTES + 64 * 1024 });
   const webRoot = resolve(process.cwd(), "webapp", "dist");
@@ -95,6 +111,11 @@ export function createAppServer(
       user: { firstName: user.first_name },
       access: accessPayload(user.id),
       botUsername,
+      payments: {
+        plategaEnabled: platega.enabled,
+        packages: Object.values(RUB_CREDIT_PACKAGES),
+        recent: db.recentExternalPayments(user.id, 5),
+      },
       history: db.recentGenerations(user.id, 5).map((item) => ({
         id: item.id,
         source: item.source,
@@ -103,6 +124,78 @@ export function createAppServer(
         createdAt: item.createdAt,
       })),
     };
+  });
+
+  app.post<{ Body: CreatePaymentBody }>("/api/mini-app/payments/platega", async (request, reply) => {
+    const user = authenticate(request);
+    const packageId = request.body?.packageId;
+    if (!platega.enabled) {
+      return reply.code(503).send({ code: "PAYMENTS_UNAVAILABLE", message: "Оплата картой пока недоступна" });
+    }
+    if (!packageId || !isCreditPackageId(packageId)) {
+      return reply.code(400).send({ code: "BAD_PACKAGE", message: "Неизвестный пакет" });
+    }
+    if (!db.claimAction(user.id, "platega-create-payment", 3)) {
+      return reply.code(429).send({ code: "TOO_FAST", message: "Подожди пару секунд" });
+    }
+    const selected = RUB_CREDIT_PACKAGES[packageId];
+    const payload = `poymi-v1:${user.id}:${packageId}:${randomUUID()}`;
+    const publicOrigin = paymentOrigin(config);
+    if (!publicOrigin) {
+      return reply.code(503).send({ code: "PAYMENTS_UNAVAILABLE", message: "Платёжный адрес не настроен" });
+    }
+    const payment = await platega.createPayment({
+      amount: selected.rubles,
+      description: `${selected.credits} запросов в Пойми AI`,
+      returnUrl: `${publicOrigin}/app/?payment=success`,
+      failedUrl: `${publicOrigin}/app/?payment=failed`,
+      payload,
+      telegramId: user.id,
+      ...(user.username ? { username: user.username } : {}),
+    });
+    if (!payment.transactionId || !payment.url) throw new Error("Platega returned invalid payment");
+    db.createExternalPayment({
+      transactionId: payment.transactionId,
+      telegramId: user.id,
+      packageId,
+      credits: selected.credits,
+      amountRub: selected.rubles,
+      payload,
+      paymentUrl: payment.url,
+    });
+    db.recordEvent(user.id, "platega_payment_created", packageId);
+    analytics.capture(user.id, "platega_payment_created", {
+      package_id: packageId,
+      amount_rub: selected.rubles,
+    });
+    return { transactionId: payment.transactionId, url: payment.url, status: "pending" };
+  });
+
+  app.get<{ Params: { transactionId: string } }>(
+    "/api/mini-app/payments/platega/:transactionId",
+    async (request, reply) => {
+      const user = authenticate(request);
+      const payment = db.getExternalPayment(request.params.transactionId);
+      if (!payment || payment.telegramId !== user.id) {
+        return reply.code(404).send({ code: "PAYMENT_NOT_FOUND", message: "Платёж не найден" });
+      }
+      await syncPlategaPayment(payment.transactionId, platega, db, analytics);
+      const current = db.getExternalPayment(payment.transactionId)!;
+      return { status: current.status, access: accessPayload(user.id) };
+    },
+  );
+
+  app.post<{ Body: PlategaCallbackBody }>("/api/payments/platega/callback", async (request, reply) => {
+    const merchantId = request.headers["x-merchantid"];
+    const secret = request.headers["x-secret"];
+    if (!platega.verifyCallbackHeaders(
+      typeof merchantId === "string" ? merchantId : undefined,
+      typeof secret === "string" ? secret : undefined,
+    )) return reply.code(401).send();
+    const transactionId = request.body?.id;
+    if (!transactionId || !db.getExternalPayment(transactionId)) return reply.code(200).send();
+    await syncPlategaPayment(transactionId, platega, db, analytics);
+    return reply.code(200).send();
   });
 
   app.post<{ Body: AskBody }>("/api/mini-app/ask", async (request, reply) => {
@@ -222,6 +315,41 @@ export function createAppServer(
   });
 
   return app;
+}
+
+async function syncPlategaPayment(
+  transactionId: string,
+  platega: PlategaGateway,
+  db: BotDatabase,
+  analytics: ProductAnalytics,
+): Promise<void> {
+  const local = db.getExternalPayment(transactionId);
+  if (!local || local.status === "chargebacked") return;
+  const remote = await platega.getTransaction(transactionId);
+  const amount = remote.paymentDetails?.amount;
+  const currency = remote.paymentDetails?.currency;
+  if (remote.id !== transactionId || amount !== local.amountRub || currency !== "RUB") {
+    throw new Error("Platega transaction verification failed");
+  }
+  if (remote.status === "CONFIRMED") {
+    if (db.confirmExternalPayment(transactionId)) {
+      db.recordEvent(local.telegramId, "platega_payment_confirmed", local.packageId);
+      analytics.capture(local.telegramId, "platega_payment_confirmed", {
+        package_id: local.packageId,
+        amount_rub: local.amountRub,
+      });
+    }
+  } else if (remote.status === "CANCELED") {
+    db.updateExternalPaymentStatus(transactionId, "canceled");
+  } else if (remote.status === "CHARGEBACKED") {
+    db.updateExternalPaymentStatus(transactionId, "chargebacked");
+  }
+}
+
+function paymentOrigin(config: AppConfig): string | undefined {
+  if (config.RENDER_EXTERNAL_URL) return config.RENDER_EXTERNAL_URL.replace(/\/$/, "");
+  if (!config.MINI_APP_URL) return undefined;
+  return new URL(config.MINI_APP_URL).origin;
 }
 
 function requestWord(value: number): string {

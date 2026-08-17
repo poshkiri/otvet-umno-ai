@@ -6,7 +6,9 @@ import {
   ExclamationTriangleIcon,
   FileTextIcon,
   Link2Icon,
+  HomeIcon,
   PaperPlaneIcon,
+  PersonIcon,
   PlayIcon,
   ReloadIcon,
   SpeakerLoudIcon,
@@ -16,7 +18,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, miniAppApi, type AccessPayload, type SessionPayload } from "./api";
 import { telegramWebApp } from "./telegram";
 
-type View = "home" | "working" | "result" | "limit" | "error";
+type View = "home" | "profile" | "working" | "result" | "limit" | "error";
 
 interface ResultSection {
   title: string;
@@ -83,6 +85,22 @@ const DEMO_HISTORY: HistoryItem[] = [
   },
 ];
 
+const DEMO_SESSION: SessionPayload = {
+  user: { firstName: "Max" },
+  access: { remaining: 5, label: "5 запросов", plan: "free" },
+  botUsername: "OtvetUmnoAI_bot",
+  payments: {
+    plategaEnabled: true,
+    packages: [
+      { id: "start", title: "50 запросов", credits: 50, rubles: 199 },
+      { id: "plus", title: "200 запросов", credits: 200, rubles: 649 },
+      { id: "pro", title: "500 запросов", credits: 500, rubles: 1_490 },
+    ],
+    recent: [],
+  },
+  history: DEMO_HISTORY,
+};
+
 export default function App() {
   const telegram = useMemo(() => telegramWebApp(), []);
   const isDemo = !telegram?.initData;
@@ -94,6 +112,9 @@ export default function App() {
   const [access, setAccess] = useState<AccessPayload>({ remaining: 5, label: "5 запросов", plan: "free" });
   const [history, setHistory] = useState<HistoryItem[]>(isDemo ? DEMO_HISTORY : []);
   const [botUsername, setBotUsername] = useState("OtvetUmnoAI_bot");
+  const [session, setSession] = useState<SessionPayload | undefined>(isDemo ? DEMO_SESSION : undefined);
+  const [paymentBusy, setPaymentBusy] = useState("");
+  const [paymentNotice, setPaymentNotice] = useState("");
   const [result, setResult] = useState("");
   const [conversationId, setConversationId] = useState("");
   const [followUps, setFollowUps] = useState<Array<{ question: string; answer: string }>>([]);
@@ -106,9 +127,35 @@ export default function App() {
   const recognition = useRef<SpeechRecognitionLike | undefined>(undefined);
 
   const applySession = (session: SessionPayload) => {
+    setSession(session);
     setAccess(session.access);
     setBotUsername(session.botUsername);
     setHistory(session.history);
+  };
+
+  const checkPendingPayment = async () => {
+    if (!telegram?.initData) return;
+    const transactionId = window.localStorage.getItem("poymi-pending-payment");
+    if (!transactionId) return;
+    setPaymentBusy(transactionId);
+    try {
+      const payment = await miniAppApi.plategaPayment(telegram.initData, transactionId);
+      setAccess(payment.access);
+      if (payment.status === "confirmed") {
+        window.localStorage.removeItem("poymi-pending-payment");
+        setPaymentNotice("Оплата подтверждена. Запросы уже начислены.");
+        await refreshSession();
+      } else if (payment.status === "canceled" || payment.status === "chargebacked") {
+        window.localStorage.removeItem("poymi-pending-payment");
+        setPaymentNotice("Платёж не завершён. Можно попробовать ещё раз.");
+      } else {
+        setPaymentNotice("Платёж ещё обрабатывается. Проверим снова через несколько секунд.");
+      }
+    } catch (reason) {
+      setPaymentNotice(reason instanceof Error ? reason.message : "Не удалось проверить платёж");
+    } finally {
+      setPaymentBusy("");
+    }
   };
 
   const showError = (reason: unknown) => {
@@ -125,6 +172,13 @@ export default function App() {
     telegram?.setBackgroundColor?.("#f7f8f7");
     if (!telegram?.initData) return;
     miniAppApi.session(telegram.initData).then(applySession).catch((reason: unknown) => showError(reason));
+    if (new URLSearchParams(window.location.search).has("payment")) void checkPendingPayment();
+  }, [telegram]);
+
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") void checkPendingPayment(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [telegram]);
 
   useEffect(() => () => {
@@ -275,6 +329,22 @@ export default function App() {
 
   const openPlans = () => telegram?.openTelegramLink(`https://t.me/${botUsername}?start=miniapp_plus`);
 
+  const buyWithPlatega = async (packageId: string) => {
+    if (!telegram?.initData || paymentBusy) return;
+    setPaymentBusy(packageId);
+    setPaymentNotice("");
+    try {
+      const payment = await miniAppApi.createPlategaPayment(telegram.initData, packageId);
+      window.localStorage.setItem("poymi-pending-payment", payment.transactionId);
+      if (telegram.openLink) telegram.openLink(payment.url);
+      else window.open(payment.url, "_blank", "noopener,noreferrer");
+    } catch (reason) {
+      setPaymentNotice(reason instanceof Error ? reason.message : "Не удалось открыть оплату");
+    } finally {
+      setPaymentBusy("");
+    }
+  };
+
   const resetHome = () => {
     setView("home");
     setError("");
@@ -301,6 +371,18 @@ export default function App() {
             onSubmit={submitHome}
             onVoice={startVoiceInput}
             onOpenHistory={openHistoryItem}
+            onProfile={() => setView("profile")}
+          />
+        )}
+        {view === "profile" && session && (
+          <ProfileView
+            session={session}
+            busy={paymentBusy}
+            notice={paymentNotice}
+            onHome={resetHome}
+            onStars={openPlans}
+            onBuy={buyWithPlatega}
+            onCheck={checkPendingPayment}
           />
         )}
         {view === "working" && <WorkingView previewUrl={selectedFile ? previewUrl : ""} text={workingText} />}
@@ -332,7 +414,7 @@ export default function App() {
   );
 }
 
-function HomeView({ access, history, previewUrl, selectedFile, question, listening, onQuestion, onChoosePhoto, onAnalyze, onSubmit, onVoice, onOpenHistory }: {
+function HomeView({ access, history, previewUrl, selectedFile, question, listening, onQuestion, onChoosePhoto, onAnalyze, onSubmit, onVoice, onOpenHistory, onProfile }: {
   access: AccessPayload;
   history: HistoryItem[];
   previewUrl: string;
@@ -345,6 +427,7 @@ function HomeView({ access, history, previewUrl, selectedFile, question, listeni
   onSubmit: (event: FormEvent) => void;
   onVoice: () => void;
   onOpenHistory: (item: HistoryItem) => void;
+  onProfile: () => void;
 }) {
   const visibleHistory = history.slice(0, 2);
   return (
@@ -394,8 +477,72 @@ function HomeView({ access, history, previewUrl, selectedFile, question, listeni
           </div>
         </section>
       </section>
+      <BottomNav active="home" onHome={() => undefined} onProfile={onProfile} />
     </motion.main>
   );
+}
+
+function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }: {
+  session: SessionPayload;
+  busy: string;
+  notice: string;
+  onHome: () => void;
+  onStars: () => void;
+  onBuy: (packageId: string) => void;
+  onCheck: () => void;
+}) {
+  const planLabel = session.access.plan === "pro" ? "Безлимит" : session.access.plan === "plus" ? "Plus" : "Бесплатный";
+  const hasPending = session.payments.recent.some((payment) => payment.status === "pending") || Boolean(window.localStorage.getItem("poymi-pending-payment"));
+  return (
+    <motion.main className="profile-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <header className="topbar"><Brand /><span className="profile-kicker">Профиль</span></header>
+      <div className="profile-scroll">
+        <section className="profile-hero">
+          <div className="profile-avatar">{session.user.firstName.slice(0, 1).toUpperCase()}</div>
+          <div><h1>{session.user.firstName}</h1><p>{planLabel} тариф</p></div>
+          <strong>{session.access.remaining === null ? "∞" : session.access.remaining}<small> запросов</small></strong>
+        </section>
+
+        <section className="plus-band">
+          <div><span>Пойми AI Plus</span><h2>Больше возможностей на 30 дней</h2><p>50 AI-запросов и до 20 изображений</p></div>
+          <button type="button" onClick={onStars}>Открыть Plus</button>
+        </section>
+
+        <section className="packages-section">
+          <div className="section-heading"><h2>Добавить запросы</h2><span>Не сгорают</span></div>
+          <div className="package-list">
+            {session.payments.packages.map((item) => (
+              <button type="button" key={item.id} disabled={!session.payments.plategaEnabled || Boolean(busy)} onClick={() => onBuy(item.id)}>
+                <span><strong>{item.credits}</strong><small> запросов</small></span>
+                <b>{busy === item.id ? "Открываю…" : `${item.rubles} ₽`}</b>
+                <ChevronRightIcon />
+              </button>
+            ))}
+          </div>
+          {!session.payments.plategaEnabled && <p className="payment-hint">Оплата картой скоро появится. Stars уже доступны.</p>}
+          {notice && <p className="payment-notice">{notice}</p>}
+          {hasPending && <button className="check-payment" type="button" disabled={Boolean(busy)} onClick={onCheck}>Проверить оплату</button>}
+        </section>
+
+        {session.payments.recent.length > 0 && (
+          <section className="purchase-section">
+            <h2>Последние покупки</h2>
+            {session.payments.recent.slice(0, 3).map((payment) => (
+              <div key={payment.transactionId}><span>{payment.credits} запросов</span><small>{paymentStatus(payment.status)}</small><b>{payment.amountRub} ₽</b></div>
+            ))}
+          </section>
+        )}
+      </div>
+      <BottomNav active="profile" onHome={onHome} onProfile={() => undefined} />
+    </motion.main>
+  );
+}
+
+function BottomNav({ active, onHome, onProfile }: { active: "home" | "profile"; onHome: () => void; onProfile: () => void }) {
+  return <nav className="bottom-nav" aria-label="Разделы">
+    <button className={active === "home" ? "active" : ""} type="button" onClick={onHome}><HomeIcon /><span>Главная</span></button>
+    <button className={active === "profile" ? "active" : ""} type="button" onClick={onProfile}><PersonIcon /><span>Профиль</span></button>
+  </nav>;
 }
 
 function WorkingView({ previewUrl, text }: { previewUrl: string; text: string }) {
@@ -499,4 +646,11 @@ function formatHistoryDate(value: string): string {
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function paymentStatus(status: "pending" | "confirmed" | "canceled" | "chargebacked"): string {
+  if (status === "confirmed") return "Оплачено";
+  if (status === "pending") return "Ожидает оплаты";
+  if (status === "chargebacked") return "Возврат";
+  return "Отменено";
 }

@@ -8,6 +8,12 @@ export const CREDIT_PACKAGES = {
   pro: { id: "pro", title: "500 запросов", credits: 500, stars: 1299 },
 } as const;
 
+export const RUB_CREDIT_PACKAGES = {
+  start: { id: "start", title: "50 запросов", credits: 50, rubles: 199 },
+  plus: { id: "plus", title: "200 запросов", credits: 200, rubles: 649 },
+  pro: { id: "pro", title: "500 запросов", credits: 500, rubles: 1_490 },
+} as const;
+
 export type CreditPackageId = keyof typeof CREDIT_PACKAGES;
 export type CreditPackage = (typeof CREDIT_PACKAGES)[CreditPackageId];
 

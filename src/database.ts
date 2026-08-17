@@ -183,6 +183,23 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS external_payments (
+        transaction_id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        provider TEXT NOT NULL CHECK (provider = 'platega'),
+        package_id TEXT NOT NULL,
+        credits INTEGER NOT NULL CHECK (credits > 0),
+        amount_rub INTEGER NOT NULL CHECK (amount_rub > 0),
+        payload TEXT NOT NULL UNIQUE,
+        payment_url TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'confirmed', 'canceled', 'chargebacked')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        confirmed_at TEXT,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -206,6 +223,9 @@ export class BotDatabase {
 
       CREATE INDEX IF NOT EXISTS mini_app_conversations_user_date
       ON mini_app_conversations(telegram_id, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS external_payments_user_date
+      ON external_payments(telegram_id, created_at DESC);
 
       INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
       SELECT telegram_id, 'legacy' FROM users;
@@ -870,6 +890,182 @@ export class BotDatabase {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  createExternalPayment(input: {
+    transactionId: string;
+    telegramId: number;
+    packageId: string;
+    credits: number;
+    amountRub: number;
+    payload: string;
+    paymentUrl: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO external_payments (
+        transaction_id, telegram_id, provider, package_id, credits,
+        amount_rub, payload, payment_url
+      ) VALUES (?, ?, 'platega', ?, ?, ?, ?, ?)
+    `).run(
+      input.transactionId,
+      input.telegramId,
+      input.packageId,
+      input.credits,
+      input.amountRub,
+      input.payload,
+      input.paymentUrl,
+    );
+  }
+
+  getExternalPayment(transactionId: string): {
+    transactionId: string;
+    telegramId: number;
+    packageId: string;
+    credits: number;
+    amountRub: number;
+    payload: string;
+    paymentUrl: string;
+    status: "pending" | "confirmed" | "canceled" | "chargebacked";
+    createdAt: string;
+  } | undefined {
+    const row = this.db.prepare(`
+      SELECT transaction_id, telegram_id, package_id, credits, amount_rub,
+             payload, payment_url, status, created_at
+      FROM external_payments WHERE transaction_id = ?
+    `).get(transactionId) as {
+      transaction_id: string;
+      telegram_id: number;
+      package_id: string;
+      credits: number;
+      amount_rub: number;
+      payload: string;
+      payment_url: string;
+      status: "pending" | "confirmed" | "canceled" | "chargebacked";
+      created_at: string;
+    } | undefined;
+    return row ? {
+      transactionId: row.transaction_id,
+      telegramId: row.telegram_id,
+      packageId: row.package_id,
+      credits: row.credits,
+      amountRub: row.amount_rub,
+      payload: row.payload,
+      paymentUrl: row.payment_url,
+      status: row.status,
+      createdAt: row.created_at,
+    } : undefined;
+  }
+
+  confirmExternalPayment(transactionId: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const payment = this.getExternalPayment(transactionId);
+      if (!payment || payment.status !== "pending") {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      const chargeId = `platega:${transactionId}`;
+      const recorded = this.db.prepare(`
+        INSERT OR IGNORE INTO payments (
+          telegram_payment_charge_id, telegram_id, package_id, credits,
+          remaining_credits, stars, invoice_payload
+        ) VALUES (?, ?, ?, ?, ?, 0, ?)
+      `).run(
+        chargeId,
+        payment.telegramId,
+        `platega:${payment.packageId}`,
+        payment.credits,
+        payment.credits,
+        payment.payload,
+      );
+      if (recorded.changes > 0) {
+        this.db.prepare(`
+          UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE telegram_id = ?
+        `).run(payment.credits, payment.telegramId);
+      }
+      this.db.prepare(`
+        UPDATE external_payments
+        SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE transaction_id = ? AND status = 'pending'
+      `).run(transactionId);
+      this.db.exec("COMMIT");
+      return recorded.changes > 0;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateExternalPaymentStatus(
+    transactionId: string,
+    status: "canceled" | "chargebacked",
+  ): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const payment = this.getExternalPayment(transactionId);
+      if (!payment || payment.status === status) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      if (status === "canceled" && payment.status !== "pending") {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      if (status === "chargebacked" && payment.status === "confirmed") {
+        const chargeId = `platega:${transactionId}`;
+        const paid = this.getPayment(chargeId);
+        if (paid?.status === "paid") {
+          this.db.prepare(`
+            UPDATE payments SET status = 'refunded', remaining_credits = 0,
+                                refunded_at = CURRENT_TIMESTAMP
+            WHERE telegram_payment_charge_id = ?
+          `).run(chargeId);
+          this.db.prepare(`
+            UPDATE users SET credits = MAX(0, credits - ?), updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+          `).run(paid.remainingCredits, paid.telegramId);
+        }
+      }
+      this.db.prepare(`
+        UPDATE external_payments SET status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE transaction_id = ?
+      `).run(status, transactionId);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recentExternalPayments(telegramId: number, limit = 10): Array<{
+    transactionId: string;
+    packageId: string;
+    credits: number;
+    amountRub: number;
+    status: "pending" | "confirmed" | "canceled" | "chargebacked";
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT transaction_id, package_id, credits, amount_rub, status, created_at
+      FROM external_payments WHERE telegram_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(telegramId, limit) as Array<{
+      transaction_id: string;
+      package_id: string;
+      credits: number;
+      amount_rub: number;
+      status: "pending" | "confirmed" | "canceled" | "chargebacked";
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      transactionId: row.transaction_id,
+      packageId: row.package_id,
+      credits: row.credits,
+      amountRub: row.amount_rub,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
   }
 
   recentPayments(telegramId: number, limit = 10): PaymentRecord[] {

@@ -44,6 +44,15 @@ const schema = z.object({
     z.string().url().optional(),
   ),
   MINI_APP_AUTH_MAX_AGE_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
+  PLATEGA_MERCHANT_ID: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().uuid().optional(),
+  ),
+  PLATEGA_SECRET: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().min(20).optional(),
+  ),
+  PLATEGA_API_URL: z.string().url().default("https://app.platega.io"),
 });
 
 export type AppConfig = z.infer<typeof schema>;
