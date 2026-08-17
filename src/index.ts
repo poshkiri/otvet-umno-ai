@@ -7,10 +7,21 @@ import { reconcileStarTransactions } from "./reconciliation.js";
 import { ProductAnalytics } from "./analytics.js";
 import { startDailyReporter } from "./reporting.js";
 import { createAppServer } from "./server.js";
+import { importDatabaseIfPresent } from "./database-import.js";
 
 const config = loadConfig();
 const botPollingEnabled = process.env.BOT_POLLING_ENABLED !== "false";
 if (config.MINI_APP_URL) process.env.MINI_APP_URL = config.MINI_APP_URL;
+const databaseImport = importDatabaseIfPresent(
+  config.DATABASE_PATH,
+  process.env.DATABASE_IMPORT_PATH,
+);
+if (databaseImport.imported) {
+  console.log(
+    `База импортирована: ${databaseImport.users} пользователей, ${databaseImport.payments} платежей`,
+  );
+  if (databaseImport.backupPath) console.log(`Предыдущая база сохранена: ${databaseImport.backupPath}`);
+}
 const database = new BotDatabase(
   config.DATABASE_PATH,
   config.FREE_REQUEST_LIMIT,
