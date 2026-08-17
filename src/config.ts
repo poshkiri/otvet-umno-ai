@@ -34,6 +34,16 @@ const schema = z.object({
   POSTHOG_HOST: z.string().url().default("https://eu.i.posthog.com"),
   REPORT_TIMEZONE: z.string().default("Asia/Irkutsk"),
   DAILY_REPORT_HOUR: z.coerce.number().int().min(0).max(23).default(10),
+  PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
+  MINI_APP_URL: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().url().optional(),
+  ),
+  RENDER_EXTERNAL_URL: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().url().optional(),
+  ),
+  MINI_APP_AUTH_MAX_AGE_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
 });
 
 export type AppConfig = z.infer<typeof schema>;
@@ -43,6 +53,12 @@ export function loadConfig(): AppConfig {
   if (!parsed.success) {
     const message = parsed.error.issues.map((issue) => issue.message).join("; ");
     throw new Error(`Ошибка конфигурации: ${message}`);
+  }
+  if (!parsed.data.MINI_APP_URL && parsed.data.RENDER_EXTERNAL_URL) {
+    return {
+      ...parsed.data,
+      MINI_APP_URL: `${parsed.data.RENDER_EXTERNAL_URL.replace(/\/$/, "")}/app/`,
+    };
   }
   return parsed.data;
 }

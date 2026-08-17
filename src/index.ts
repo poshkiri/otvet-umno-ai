@@ -6,8 +6,10 @@ import { run } from "@grammyjs/runner";
 import { reconcileStarTransactions } from "./reconciliation.js";
 import { ProductAnalytics } from "./analytics.js";
 import { startDailyReporter } from "./reporting.js";
+import { createAppServer } from "./server.js";
 
 const config = loadConfig();
+if (config.MINI_APP_URL) process.env.MINI_APP_URL = config.MINI_APP_URL;
 const database = new BotDatabase(
   config.DATABASE_PATH,
   config.FREE_REQUEST_LIMIT,
@@ -45,6 +47,15 @@ await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "myid", description: "Показать мой Telegram ID" },
   { command: "help", description: "Как пользоваться" },
 ]));
+if (config.MINI_APP_URL) {
+  await configureProfile("кнопку Mini App", () => bot.api.setChatMenuButton({
+    menu_button: {
+      type: "web_app",
+      text: "📷 Открыть Пойми AI",
+      web_app: { url: config.MINI_APP_URL! },
+    },
+  }));
+}
 await configureProfile("короткое описание", () => bot.api.setMyShortDescription(
   "✨ Фото, голос, учёба, тексты и изображения. Канал: @PoymiAI_news",
 ));
@@ -61,6 +72,9 @@ await configureProfile("полное описание", () => bot.api.setMyDescr
     "Канал: @PoymiAI_news",
   ].join("\n"),
 ));
+const appServer = createAppServer(config, database, ai, analytics, bot.botInfo.username);
+await appServer.listen({ host: "0.0.0.0", port: config.PORT });
+console.log(`Mini App API запущен на порту ${config.PORT}`);
 try {
   const result = await reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS);
   if (result.credited || result.refunded) {
@@ -102,6 +116,7 @@ const stop = async (signal: string): Promise<void> => {
   console.log(`Получен ${signal}, жду завершения активных задач…`);
   clearInterval(reconciliationTimer);
   dailyReporter.stop();
+  await appServer.close();
   await runner.stop();
   await drainBackgroundTasks();
   await dailyReporter.drain();

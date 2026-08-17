@@ -1,12 +1,13 @@
 services:
-  - type: worker
-    name: otvet-umno-ai
+  - type: web
+    name: poymi-ai
     runtime: node
     region: frankfurt
     plan: starter
     autoDeployTrigger: commit
     buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm start
+    healthCheckPath: /health
     disk:
       name: bot-data
       mountPath: /opt/render/project/src/data

@@ -36,6 +36,21 @@ test("database stores history and favorite replies", () => {
   db.close();
 });
 
+test("Mini App conversations are isolated by Telegram user", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  db.ensureUser(601);
+  db.ensureUser(602);
+  const conversation = db.createMiniAppConversation(601, "response-1");
+
+  assert.equal(db.getMiniAppConversation(601, conversation), "response-1");
+  assert.equal(db.getMiniAppConversation(602, conversation), undefined);
+  assert.equal(db.updateMiniAppConversation(602, conversation, "stolen"), false);
+  assert.equal(db.updateMiniAppConversation(601, conversation, "response-2"), true);
+  assert.equal(db.getMiniAppConversation(601, conversation), "response-2");
+  db.close();
+});
+
 test("pro plan has unlimited access and does not consume credits", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 0);

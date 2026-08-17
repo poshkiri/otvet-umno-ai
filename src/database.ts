@@ -174,6 +174,15 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS mini_app_conversations (
+        id TEXT PRIMARY KEY,
+        telegram_id INTEGER NOT NULL,
+        response_id TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -194,6 +203,9 @@ export class BotDatabase {
 
       CREATE INDEX IF NOT EXISTS subscription_request_usage_user_date
       ON subscription_request_usage(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS mini_app_conversations_user_date
+      ON mini_app_conversations(telegram_id, updated_at DESC);
 
       INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
       SELECT telegram_id, 'legacy' FROM users;
@@ -959,6 +971,35 @@ export class BotDatabase {
       INSERT INTO generations (telegram_id, flow, category, source, result)
       VALUES (?, ?, ?, ?, ?)
     `).run(telegramId, flow, category, source, result);
+  }
+
+  createMiniAppConversation(telegramId: number, responseId: string): string {
+    const id = randomUUID();
+    this.db.prepare(`
+      INSERT INTO mini_app_conversations (id, telegram_id, response_id)
+      VALUES (?, ?, ?)
+    `).run(id, telegramId, responseId);
+    this.db.prepare(
+      "DELETE FROM mini_app_conversations WHERE updated_at < datetime('now', '-7 days')",
+    ).run();
+    return id;
+  }
+
+  getMiniAppConversation(telegramId: number, id: string): string | undefined {
+    const row = this.db.prepare(`
+      SELECT response_id FROM mini_app_conversations
+      WHERE id = ? AND telegram_id = ?
+    `).get(id, telegramId) as { response_id: string } | undefined;
+    return row?.response_id;
+  }
+
+  updateMiniAppConversation(telegramId: number, id: string, responseId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE mini_app_conversations
+      SET response_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND telegram_id = ?
+    `).run(responseId, id, telegramId);
+    return result.changes > 0;
   }
 
   recentGenerations(telegramId: number, limit = 5): GenerationRecord[] {

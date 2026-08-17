@@ -363,6 +363,11 @@ export function createBot(
       ].join("\n"),
       reply_markup: mainMenu(),
     });
+    if (source === "miniapp_plus") {
+      await ctx.reply("Выбери Plus или разовый пакет запросов:", {
+        reply_markup: tariffsMenu(),
+      });
+    }
   });
 
   bot.command("menu", async (ctx) => {

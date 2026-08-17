@@ -2,8 +2,10 @@ import { InlineKeyboard } from "grammy";
 import type { CategoryId, FlowId } from "./types.js";
 import { CREDIT_PACKAGES } from "./payments.js";
 
-export function mainMenu(): InlineKeyboard {
-  return new InlineKeyboard()
+export function mainMenu(miniAppUrl = process.env.MINI_APP_URL): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (miniAppUrl?.trim()) keyboard.webApp("📷 Открыть сканер", miniAppUrl.trim()).row();
+  return keyboard
     .text("🤖 Что умеет бот", "menu:capabilities")
     .text("👤 Мой кабинет", "menu:profile");
 }

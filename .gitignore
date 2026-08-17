@@ -6,3 +6,5 @@ data/*.db
 data/*.db-*
 .DS_Store
 *.log
+.pnpm-store/
+webapp-*.png

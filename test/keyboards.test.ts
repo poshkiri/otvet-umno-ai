@@ -18,6 +18,16 @@ test("main menu keeps the primary actions simple", () => {
   ]);
 });
 
+test("main menu promotes the Mini App with one primary button", () => {
+  assert.deepEqual(mainMenu("https://example.com/app/").inline_keyboard, [
+    [{ text: "📷 Открыть сканер", web_app: { url: "https://example.com/app/" } }],
+    [
+      { text: "🤖 Что умеет бот", callback_data: "menu:capabilities" },
+      { text: "👤 Мой кабинет", callback_data: "menu:profile" },
+    ],
+  ]);
+});
+
 test("paywall offers only subscription or request packs", () => {
   assert.deepEqual(paywallMenu().inline_keyboard, [
     [{ text: "⭐ Подключить Plus", callback_data: "subscribe:plus" }],
