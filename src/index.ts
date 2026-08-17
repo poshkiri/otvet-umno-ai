@@ -8,9 +8,13 @@ import { ProductAnalytics } from "./analytics.js";
 import { startDailyReporter } from "./reporting.js";
 import { createAppServer } from "./server.js";
 import { importDatabaseIfPresent, selectDatabasePath } from "./database-import.js";
+import { isBotPollingEnabled } from "./runtime-config.js";
 
 const config = loadConfig();
-const botPollingEnabled = process.env.BOT_POLLING_ENABLED !== "false";
+const botPollingEnabled = isBotPollingEnabled(
+  process.env.BOT_POLLING_ENABLED,
+  process.env.BOT_POLLING_RUNTIME_ENABLED,
+);
 const databasePath = selectDatabasePath(config.DATABASE_PATH, process.env.DATABASE_RUNTIME_PATH);
 if (config.MINI_APP_URL) process.env.MINI_APP_URL = config.MINI_APP_URL;
 const databaseImport = importDatabaseIfPresent(
