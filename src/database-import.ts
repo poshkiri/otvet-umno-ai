@@ -17,6 +17,10 @@ export interface DatabaseImportResult {
   users: number;
 }
 
+export function selectDatabasePath(configuredPath: string, runtimePath?: string): string {
+  return runtimePath?.trim() || configuredPath;
+}
+
 function databaseStats(path: string): Pick<DatabaseImportResult, "payments" | "users"> {
   const db = new DatabaseSync(path, { readOnly: true });
   try {

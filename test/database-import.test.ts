@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { importDatabaseIfPresent } from "../src/database-import.js";
+import { importDatabaseIfPresent, selectDatabasePath } from "../src/database-import.js";
+
+test("runtime database path overrides a malformed configured path", () => {
+  assert.equal(
+    selectDatabasePath("./data/bot.db/opt/render/project/src/data/bot.db", "  ./data/poymi.db  "),
+    "./data/poymi.db",
+  );
+  assert.equal(selectDatabasePath("./data/bot.db", "  "), "./data/bot.db");
+});
 
 function createDatabase(path: string, telegramId: number): void {
   const db = new DatabaseSync(path);
