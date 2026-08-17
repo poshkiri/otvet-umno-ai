@@ -9,6 +9,7 @@ import { startDailyReporter } from "./reporting.js";
 import { createAppServer } from "./server.js";
 
 const config = loadConfig();
+const botPollingEnabled = process.env.BOT_POLLING_ENABLED !== "false";
 if (config.MINI_APP_URL) process.env.MINI_APP_URL = config.MINI_APP_URL;
 const database = new BotDatabase(
   config.DATABASE_PATH,
@@ -75,6 +76,26 @@ await configureProfile("полное описание", () => bot.api.setMyDescr
 const appServer = createAppServer(config, database, ai, analytics, bot.botInfo.username);
 await appServer.listen({ host: "0.0.0.0", port: config.PORT });
 console.log(`Mini App API запущен на порту ${config.PORT}`);
+
+if (!botPollingEnabled) {
+  console.log("Режим Mini App: получение Telegram-сообщений отключено");
+  let stoppingWebServer = false;
+  const stopWebServer = async (signal: string): Promise<void> => {
+    if (stoppingWebServer) return;
+    stoppingWebServer = true;
+    console.log(`Получен ${signal}, останавливаю Mini App API…`);
+    await appServer.close();
+    await drainBackgroundTasks();
+    await analytics.shutdown();
+    database.close();
+    console.log("Mini App API остановлен корректно");
+  };
+
+  process.once("SIGINT", () => void stopWebServer("SIGINT"));
+  process.once("SIGTERM", () => void stopWebServer("SIGTERM"));
+  await new Promise<void>(() => undefined);
+}
+
 try {
   const result = await reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS);
   if (result.credited || result.refunded) {
