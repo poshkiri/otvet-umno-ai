@@ -2,78 +2,114 @@ import {
   ArrowLeftIcon,
   CameraIcon,
   CheckCircledIcon,
-  Crosshair2Icon,
+  ChevronRightIcon,
   ExclamationTriangleIcon,
-  HeartIcon,
-  ImageIcon,
-  LightningBoltIcon,
+  FileTextIcon,
+  Link2Icon,
   PaperPlaneIcon,
+  PlayIcon,
   ReloadIcon,
+  SpeakerLoudIcon,
 } from "@radix-ui/react-icons";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, miniAppApi, type AccessPayload } from "./api";
+import { ApiError, miniAppApi, type AccessPayload, type SessionPayload } from "./api";
 import { telegramWebApp } from "./telegram";
 
-type View = "camera" | "scanning" | "result" | "limit" | "error";
+type View = "home" | "working" | "result" | "limit" | "error";
 
 interface ResultSection {
   title: string;
   body: string;
 }
 
+type HistoryItem = SessionPayload["history"][number];
+
+interface SpeechRecognitionEventLike {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  }
+}
+
 const DEMO_RESULT = [
-  "📷 Что на фото",
-  "Это набор уходовой косметики SADOER из линейки Grape Seed с экстрактом виноградных косточек.",
+  "Что на фото",
+  "Это упаковка гречки. На лицевой стороне указаны вес, способ приготовления и основные свойства продукта.",
   "",
-  "🧴 Что входит",
-  "В наборе видны очищающее средство, тонер или лосьон, сыворотка, эмульсия, крем в баночке, крем для области вокруг глаз и четыре ампулы.",
+  "Что важно",
+  "Проверь срок годности, целостность упаковки и состав на обратной стороне. Если пришлёшь её фотографию, я разберу всё подробнее.",
   "",
-  "💡 Что это значит",
-  "Средства предназначены для последовательного очищения, увлажнения и ухода за кожей лица.",
-  "",
-  "✅ Как использовать",
-  "Обычно начинают с очищения, затем используют тонер, сыворотку, эмульсию и крем. Точный порядок лучше подтвердить по обратной стороне упаковки.",
+  "Как использовать",
+  "Промой крупу, залей водой в пропорции примерно 1 к 2 и вари на слабом огне до готовности.",
 ].join("\n");
+
+const DEMO_TEXT_RESULT = [
+  "Короткий ответ",
+  "Инфляция — это общий рост цен, из-за которого со временем на одну и ту же сумму можно купить меньше товаров и услуг.",
+  "",
+  "Простой пример",
+  "Если год назад продукт стоил 100 рублей, а сейчас 110, его цена выросла на 10%. На инфляцию смотрят по изменению цен сразу на большую корзину товаров.",
+].join("\n");
+
+const DEMO_HISTORY: HistoryItem[] = [
+  {
+    id: -1,
+    source: "Решите неравенство",
+    result: "Решим неравенство по шагам и проверим область допустимых значений.",
+    flow: "analyze",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: -2,
+    source: "Что такое инфляция?",
+    result: "Объяснение инфляции простыми словами с понятным примером.",
+    flow: "analyze",
+    createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+  },
+];
 
 export default function App() {
   const telegram = useMemo(() => telegramWebApp(), []);
   const isDemo = !telegram?.initData;
-  const [view, setView] = useState<View>("camera");
-  const [previewUrl, setPreviewUrl] = useState(isDemo ? "/app/sample-product.jpg" : "");
+  const isMobilePreview = new URLSearchParams(window.location.search).has("mobile-preview");
+  const [view, setView] = useState<View>("home");
+  const [previewUrl, setPreviewUrl] = useState("/app/product-grocery.jpg");
+  const [resultPreview, setResultPreview] = useState("");
   const [selectedFile, setSelectedFile] = useState<File>();
-  const [stream, setStream] = useState<MediaStream>();
-  const [torchOn, setTorchOn] = useState(false);
   const [access, setAccess] = useState<AccessPayload>({ remaining: 5, label: "5 запросов", plan: "free" });
+  const [history, setHistory] = useState<HistoryItem[]>(isDemo ? DEMO_HISTORY : []);
   const [botUsername, setBotUsername] = useState("OtvetUmnoAI_bot");
   const [result, setResult] = useState("");
   const [conversationId, setConversationId] = useState("");
   const [followUps, setFollowUps] = useState<Array<{ question: string; answer: string }>>([]);
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [workingText, setWorkingText] = useState("Готовлю понятный ответ");
   const [error, setError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
+  const recognition = useRef<SpeechRecognitionLike | undefined>(undefined);
 
-  useEffect(() => {
-    telegram?.ready();
-    telegram?.expand();
-    telegram?.setHeaderColor?.("#050706");
-    telegram?.setBackgroundColor?.("#050706");
-    if (!telegram?.initData) return;
-    miniAppApi.session(telegram.initData)
-      .then((session) => {
-        setAccess(session.access);
-        setBotUsername(session.botUsername);
-      })
-      .catch((reason: unknown) => showError(reason));
-  }, [telegram]);
-
-  useEffect(() => {
-    if (video.current && stream) video.current.srcObject = stream;
-  }, [stream]);
-
-  useEffect(() => () => stopCamera(stream), [stream]);
+  const applySession = (session: SessionPayload) => {
+    setAccess(session.access);
+    setBotUsername(session.botUsername);
+    setHistory(session.history);
+  };
 
   const showError = (reason: unknown) => {
     const message = reason instanceof Error ? reason.message : "Что-то пошло не так";
@@ -82,79 +118,61 @@ export default function App() {
     telegram?.HapticFeedback?.notificationOccurred("error");
   };
 
-  const startCamera = async () => {
-    try {
-      const nextStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
-      stopCamera(stream);
-      setSelectedFile(undefined);
-      if (previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl("");
-      setStream(nextStream);
-      telegram?.HapticFeedback?.impactOccurred("light");
-    } catch {
-      setError("Не получилось открыть камеру. Разреши доступ или выбери фото из галереи.");
-      setView("error");
-    }
+  useEffect(() => {
+    telegram?.ready();
+    telegram?.expand();
+    telegram?.setHeaderColor?.("#f7f8f7");
+    telegram?.setBackgroundColor?.("#f7f8f7");
+    if (!telegram?.initData) return;
+    miniAppApi.session(telegram.initData).then(applySession).catch((reason: unknown) => showError(reason));
+  }, [telegram]);
+
+  useEffect(() => () => {
+    recognition.current?.stop();
+    if (previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const refreshSession = async () => {
+    if (!telegram?.initData) return;
+    applySession(await miniAppApi.session(telegram.initData));
   };
 
   const chooseFile = (file?: File) => {
     if (!file) return;
     if (!file.type.match(/^image\/(jpeg|png|webp)$/)) {
-      setError("Выбери фотографию JPG, PNG или WebP.");
-      setView("error");
+      showError(new Error("Выбери фотографию JPG, PNG или WebP."));
       return;
     }
-    stopCamera(stream);
-    setStream(undefined);
     if (previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     telegram?.HapticFeedback?.impactOccurred("light");
   };
 
-  const captureFrame = async (): Promise<File | undefined> => {
-    const element = video.current;
-    if (!element || !element.videoWidth || !element.videoHeight) return undefined;
-    const canvas = document.createElement("canvas");
-    canvas.width = element.videoWidth;
-    canvas.height = element.videoHeight;
-    canvas.getContext("2d")?.drawImage(element, 0, 0);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    return blob ? new File([blob], "camera.jpg", { type: "image/jpeg" }) : undefined;
-  };
-
   const analyze = async () => {
-    if (!selectedFile && !stream && !isDemo) {
-      await startCamera();
+    if (!selectedFile && !isDemo) {
+      fileInput.current?.click();
       return;
     }
-    const file = selectedFile ?? await captureFrame();
-    if (!file && !isDemo) {
-      setError("Камера ещё не готова. Подожди секунду и попробуй снова.");
-      setView("error");
-      return;
-    }
-    if (file && !previewUrl) setPreviewUrl(URL.createObjectURL(file));
-    stopCamera(stream);
-    setStream(undefined);
-    setView("scanning");
+    setWorkingText("Разбираю фотографию");
+    setView("working");
     telegram?.HapticFeedback?.impactOccurred("medium");
     try {
       if (isDemo) {
-        await wait(1_450);
+        await wait(1_100);
         setResult(DEMO_RESULT);
         setConversationId("demo");
         setAccess({ ...access, remaining: Math.max(0, (access.remaining ?? 5) - 1), label: "4 запроса" });
       } else {
-        const response = await miniAppApi.analyze(telegram!.initData, file!);
+        const response = await miniAppApi.analyze(telegram!.initData, selectedFile!, question.trim() || undefined);
         setResult(response.result);
         setConversationId(response.conversationId);
         setAccess(response.access);
+        await refreshSession();
       }
+      setResultPreview(previewUrl);
       setFollowUps([]);
+      setQuestion("");
       setView("result");
       telegram?.HapticFeedback?.notificationOccurred("success");
     } catch (reason) {
@@ -162,20 +180,66 @@ export default function App() {
     }
   };
 
-  const toggleTorch = async () => {
-    const track = stream?.getVideoTracks()[0];
-    if (!track) {
-      setTorchOn((value) => !value);
+  const askGeneral = async (text: string) => {
+    setWorkingText("Готовлю понятный ответ");
+    setView("working");
+    setSending(true);
+    try {
+      if (isDemo) {
+        await wait(900);
+        setResult(DEMO_TEXT_RESULT);
+        setAccess({ ...access, remaining: Math.max(0, (access.remaining ?? 5) - 1), label: "4 запроса" });
+      } else {
+        const response = await miniAppApi.ask(telegram!.initData, text);
+        setResult(response.result);
+        setAccess(response.access);
+        await refreshSession();
+      }
+      setResultPreview("");
+      setConversationId("");
+      setFollowUps([]);
+      setQuestion("");
+      setView("result");
+      telegram?.HapticFeedback?.notificationOccurred("success");
+    } catch (reason) {
+      showError(reason);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const submitHome = async (event: FormEvent) => {
+    event.preventDefault();
+    const text = question.trim();
+    if (selectedFile) {
+      await analyze();
       return;
     }
-    const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
-    if (!capabilities.torch) {
-      telegram?.HapticFeedback?.notificationOccurred("warning");
+    if (text) await askGeneral(text);
+  };
+
+  const startVoiceInput = () => {
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!Recognition) {
+      showError(new Error("Голосовой ввод недоступен на этом устройстве. Можно отправить голосовое сообщение прямо в боте."));
       return;
     }
-    const next = !torchOn;
-    await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
-    setTorchOn(next);
+    recognition.current?.stop();
+    const next = new Recognition();
+    next.lang = "ru-RU";
+    next.continuous = false;
+    next.interimResults = false;
+    next.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) setQuestion(transcript);
+      telegram?.HapticFeedback?.notificationOccurred("success");
+    };
+    next.onerror = () => setError("Не удалось распознать голос. Попробуй ещё раз или напиши вопрос.");
+    next.onend = () => setListening(false);
+    recognition.current = next;
+    setListening(true);
+    next.start();
+    telegram?.HapticFeedback?.impactOccurred("light");
   };
 
   const askFollowUp = async (event: FormEvent) => {
@@ -185,14 +249,14 @@ export default function App() {
     setSending(true);
     setQuestion("");
     try {
-      const answer = isDemo
-        ? "Для утреннего ухода начни с очищения, затем используй тонер, сыворотку и лёгкий крем."
-        : (await miniAppApi.followUp(telegram!.initData, conversationId, trimmed)).result;
-      setFollowUps((items) => [...items, { question: trimmed, answer }]);
-      if (!isDemo) {
-        const session = await miniAppApi.session(telegram!.initData);
-        setAccess(session.access);
-      }
+      const response = isDemo
+        ? { result: "Разберём это по шагам. Сначала выделим главное, затем проверим детали.", access }
+        : conversationId
+          ? await miniAppApi.followUp(telegram!.initData, conversationId, trimmed)
+          : await miniAppApi.ask(telegram!.initData, trimmed);
+      setFollowUps((items) => [...items, { question: trimmed, answer: response.result }]);
+      setAccess(response.access);
+      if (!isDemo) await refreshSession();
       telegram?.HapticFeedback?.notificationOccurred("success");
     } catch (reason) {
       showError(reason);
@@ -201,50 +265,60 @@ export default function App() {
     }
   };
 
-  const openPlans = () => {
-    telegram?.openTelegramLink(`https://t.me/${botUsername}?start=miniapp_plus`);
+  const openHistoryItem = (item: HistoryItem) => {
+    setResult(item.result);
+    setResultPreview(item.id === -1 ? "/app/math-problem.jpg" : "");
+    setConversationId("");
+    setFollowUps([]);
+    setView("result");
   };
 
-  const resetCamera = () => {
-    setView("camera");
+  const openPlans = () => telegram?.openTelegramLink(`https://t.me/${botUsername}?start=miniapp_plus`);
+
+  const resetHome = () => {
+    setView("home");
     setError("");
     setResult("");
+    setResultPreview("");
     setConversationId("");
     setFollowUps([]);
   };
 
   return (
-    <div className="app">
+    <div className={`app ${isMobilePreview ? "mobile-preview" : ""}`}>
       <AnimatePresence mode="wait">
-        {view === "camera" && (
-          <CameraView
+        {view === "home" && (
+          <HomeView
             access={access}
+            history={history}
             previewUrl={previewUrl}
-            stream={stream}
-            videoRef={video}
-            torchOn={torchOn}
-            onStartCamera={startCamera}
-            onGallery={() => fileInput.current?.click()}
+            selectedFile={selectedFile}
+            question={question}
+            listening={listening}
+            onQuestion={setQuestion}
+            onChoosePhoto={() => fileInput.current?.click()}
             onAnalyze={analyze}
-            onTorch={toggleTorch}
+            onSubmit={submitHome}
+            onVoice={startVoiceInput}
+            onOpenHistory={openHistoryItem}
           />
         )}
-        {view === "scanning" && <ScanningView previewUrl={previewUrl} />}
+        {view === "working" && <WorkingView previewUrl={selectedFile ? previewUrl : ""} text={workingText} />}
         {view === "result" && (
           <ResultView
             access={access}
-            previewUrl={previewUrl}
+            previewUrl={resultPreview}
             result={result}
             followUps={followUps}
             question={question}
             sending={sending}
             onQuestion={setQuestion}
             onSubmit={askFollowUp}
-            onBack={resetCamera}
+            onBack={resetHome}
           />
         )}
-        {view === "limit" && <MessageView title="Запросы закончились" text={error} action="Посмотреть Plus" onAction={openPlans} onBack={resetCamera} />}
-        {view === "error" && <MessageView title="Не получилось" text={error} action="Попробовать ещё раз" onAction={resetCamera} onBack={resetCamera} />}
+        {view === "limit" && <MessageView title="Запросы закончились" text={error} action="Посмотреть Plus" onAction={openPlans} onBack={resetHome} />}
+        {view === "error" && <MessageView title="Не получилось" text={error} action="Вернуться" onAction={resetHome} onBack={resetHome} />}
       </AnimatePresence>
       <input
         ref={fileInput}
@@ -258,50 +332,80 @@ export default function App() {
   );
 }
 
-function CameraView({ access, previewUrl, stream, videoRef, torchOn, onStartCamera, onGallery, onAnalyze, onTorch }: {
+function HomeView({ access, history, previewUrl, selectedFile, question, listening, onQuestion, onChoosePhoto, onAnalyze, onSubmit, onVoice, onOpenHistory }: {
   access: AccessPayload;
+  history: HistoryItem[];
   previewUrl: string;
-  stream?: MediaStream;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  torchOn: boolean;
-  onStartCamera: () => void;
-  onGallery: () => void;
+  selectedFile?: File;
+  question: string;
+  listening: boolean;
+  onQuestion: (value: string) => void;
+  onChoosePhoto: () => void;
   onAnalyze: () => void;
-  onTorch: () => void;
+  onSubmit: (event: FormEvent) => void;
+  onVoice: () => void;
+  onOpenHistory: (item: HistoryItem) => void;
 }) {
+  const visibleHistory = history.slice(0, 2);
   return (
-    <motion.main className="camera-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <motion.main className="home-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <header className="topbar">
         <Brand />
-        <span className="access"><strong>{access.remaining === null ? "∞" : access.remaining}</strong> {access.remaining === null ? "" : "запросов"}<i /></span>
+        <span className="access">{access.remaining === null ? "Безлимит" : access.label}<i /></span>
       </header>
-      <section className="viewfinder">
-        {stream ? <video ref={videoRef} autoPlay muted playsInline /> : previewUrl ? <img src={previewUrl} alt="Предмет для распознавания" /> : (
-          <button className="enable-camera" type="button" onClick={onStartCamera}><CameraIcon />Включить камеру</button>
-        )}
-        <div className="focus-frame" aria-hidden="true"><span /><span /><span /><span /></div>
-        <Crosshair2Icon className="crosshair" aria-hidden="true" />
-        <motion.div className="scan-line" animate={{ top: ["18%", "78%", "18%"] }} transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }} />
-        <div className="found"><CheckCircledIcon /> Объект найден</div>
+
+      <section className="home-content">
+        <h1>Покажите или спросите</h1>
+        <div className="photo-action">
+          <img src={previewUrl} alt={selectedFile ? "Выбранная фотография" : "Пример фотографии товара"} />
+          <button type="button" onClick={selectedFile ? onAnalyze : onChoosePhoto}>
+            <CameraIcon />
+            Разобрать фото
+          </button>
+        </div>
+
+        <form className="home-composer" onSubmit={onSubmit}>
+          <button className="attach-button" type="button" onClick={onChoosePhoto} aria-label="Прикрепить фотографию"><Link2Icon /></button>
+          <input value={question} onChange={(event) => onQuestion(event.target.value)} placeholder={selectedFile ? "Что хотите узнать о фото?" : "Напишите вопрос"} aria-label="Ваш вопрос" />
+          <button className={`voice-button ${listening ? "is-listening" : ""}`} type="button" onClick={onVoice} aria-label="Задать вопрос голосом"><SpeakerLoudIcon /></button>
+          <button className="send-button" type="submit" disabled={!question.trim() && !selectedFile} aria-label="Отправить"><PaperPlaneIcon /></button>
+        </form>
+        <p className="example">Например: что это, как использовать, реши задачу</p>
+
+        <section className="history-section">
+          <div className="section-heading">
+            <h2>Недавнее</h2>
+            <span>Все <ChevronRightIcon /></span>
+          </div>
+          <div className="history-list">
+            {visibleHistory.length ? visibleHistory.map((item, index) => (
+              <button type="button" className="history-row" key={item.id} onClick={() => onOpenHistory(item)}>
+                <span className={`history-visual ${index === 1 ? "voice" : "photo"}`}>
+                  {index === 0 ? <img src="/app/math-problem.jpg" alt="Фотография учебной задачи" /> : <><PlayIcon /><SpeakerLoudIcon /></>}
+                </span>
+                <span className="history-copy">
+                  <strong>{index === 0 ? "Скриншот задачи" : "Голосовой вопрос"}</strong>
+                  <span>{index === 0 ? "Решите неравенство" : item.source}</span>
+                  <time>{formatHistoryDate(item.createdAt)}</time>
+                </span>
+                <ChevronRightIcon />
+              </button>
+            )) : <p className="empty-history">Здесь появятся ваши последние вопросы и разборы.</p>}
+          </div>
+        </section>
       </section>
-      <section className="controls">
-        <button className="round-button" type="button" onClick={onGallery} aria-label="Открыть галерею"><ImageIcon /></button>
-        <button className="shutter" type="button" onClick={onAnalyze} aria-label={stream || previewUrl ? "Распознать предмет" : "Включить камеру"}><img src="/app/poymi-logo.png" alt="" /></button>
-        <button className={`round-button ${torchOn ? "is-active" : ""}`} type="button" onClick={onTorch} aria-label="Вспышка"><LightningBoltIcon /></button>
-      </section>
-      <p className="hint">Снимите предмет целиком</p>
     </motion.main>
   );
 }
 
-function ScanningView({ previewUrl }: { previewUrl: string }) {
+function WorkingView({ previewUrl, text }: { previewUrl: string; text: string }) {
   return (
-    <motion.main className="scanning-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <motion.main className="working-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <Brand />
-      <div className="scanning-image">{previewUrl && <img src={previewUrl} alt="Анализируемый предмет" />}<motion.div animate={{ top: ["12%", "84%", "12%"] }} transition={{ duration: 1.4, repeat: Infinity }} /></div>
-      <Crosshair2Icon />
-      <h1>Изучаю фотографию</h1>
-      <p>Распознаю предметы и читаю надписи</p>
+      {previewUrl && <img src={previewUrl} alt="Обрабатываемая фотография" />}
+      <ReloadIcon className="spin" />
+      <h1>{text}</h1>
+      <p>Обычно это занимает несколько секунд</p>
     </motion.main>
   );
 }
@@ -318,24 +422,24 @@ function ResultView({ access, previewUrl, result, followUps, question, sending, 
   onBack: () => void;
 }) {
   const sections = parseResult(result);
-  const headline = sections[0]?.body.split(/[.!?\n]/)[0] || "Результат распознавания";
+  const headline = sections[0]?.title || "Понятный ответ";
   return (
     <motion.main className="result-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <header className="result-topbar">
         <button type="button" onClick={onBack} aria-label="Назад"><ArrowLeftIcon /></button>
         <Brand compact />
-        <span className="result-access"><HeartIcon /><strong>{access.remaining === null ? "∞" : access.remaining}</strong></span>
+        <span className="result-access">{access.remaining === null ? "∞" : access.remaining}</span>
       </header>
       <div className="result-scroll">
-        <div className="result-photo">{previewUrl && <img src={previewUrl} alt="Распознанный предмет" />}</div>
+        {previewUrl && <div className="result-photo"><img src={previewUrl} alt="Распознанный предмет" /></div>}
         <section className="summary">
-          <span>Результат распознавания</span>
+          <span>Ответ Пойми AI</span>
           <h1>{headline}</h1>
-          <p><CheckCircledIcon /> Объект распознан по фотографии</p>
+          <p><CheckCircledIcon /> Готово</p>
         </section>
         {sections.map((section, index) => (
           <section className="result-section" key={`${section.title}-${index}`}>
-            <div>{index === sections.length - 1 && section.title.includes("Важно") ? <ExclamationTriangleIcon /> : <Crosshair2Icon />}</div>
+            <div>{section.title.toLowerCase().includes("важ") ? <ExclamationTriangleIcon /> : <FileTextIcon />}</div>
             <article><h2>{section.title}</h2><p>{section.body}</p></article>
           </section>
         ))}
@@ -344,9 +448,9 @@ function ResultView({ access, previewUrl, result, followUps, question, sending, 
         ))}
         <div className="scroll-space" />
       </div>
-      <form className="composer" onSubmit={onSubmit}>
-        <CameraIcon />
-        <input value={question} onChange={(event) => onQuestion(event.target.value)} placeholder="Спросить по этому фото" aria-label="Вопрос по фотографии" />
+      <form className="result-composer" onSubmit={onSubmit}>
+        <Link2Icon />
+        <input value={question} onChange={(event) => onQuestion(event.target.value)} placeholder="Задать вопрос" aria-label="Уточняющий вопрос" />
         <button type="submit" disabled={!question.trim() || sending} aria-label="Отправить вопрос">{sending ? <ReloadIcon className="spin" /> : <PaperPlaneIcon />}</button>
       </form>
     </motion.main>
@@ -357,7 +461,7 @@ function MessageView({ title, text, action, onAction, onBack }: { title: string;
   return (
     <motion.main className="message-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <Brand />
-      <div><ExclamationTriangleIcon /><h1>{title}</h1><p>{text}</p><button type="button" onClick={onAction}>{action}</button><button className="secondary" type="button" onClick={onBack}>Назад к камере</button></div>
+      <div><ExclamationTriangleIcon /><h1>{title}</h1><p>{text}</p><button type="button" onClick={onAction}>{action}</button><button className="secondary" type="button" onClick={onBack}>На главный экран</button></div>
     </motion.main>
   );
 }
@@ -367,27 +471,30 @@ function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 function parseResult(result: string): ResultSection[] {
-  const headings = /^(📷 Что на фото|🧴 Что входит|💡 Что это значит|✅ Как использовать|⚠️ Важно)$/;
   const sections: ResultSection[] = [];
   let current: ResultSection | undefined;
   for (const rawLine of result.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-    if (headings.test(line)) {
+    const looksLikeHeading = line.length <= 48 && !/[.!?]$/.test(line);
+    if (looksLikeHeading && (!current || current.body)) {
       if (current?.body) sections.push(current);
-      current = { title: line.replace(/^\S+\s*/, ""), body: "" };
+      current = { title: line.replace(/^\S+\s*/, (value) => /[А-ЯA-Z]/.test(value) ? value : ""), body: "" };
     } else if (current) {
       current.body += `${current.body ? "\n" : ""}${line}`;
     } else {
-      current = { title: "Что на фото", body: line };
+      current = { title: "Понятный ответ", body: line };
     }
   }
   if (current?.body) sections.push(current);
-  return sections.length ? sections : [{ title: "Разбор", body: result }];
+  return sections.length ? sections : [{ title: "Понятный ответ", body: result }];
 }
 
-function stopCamera(stream?: MediaStream) {
-  stream?.getTracks().forEach((track) => track.stop());
+function formatHistoryDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Недавно";
+  const isToday = date.toDateString() === new Date().toDateString();
+  return `${isToday ? "Сегодня" : "Вчера"}, ${date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function wait(milliseconds: number) {

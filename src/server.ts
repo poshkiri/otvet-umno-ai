@@ -22,6 +22,10 @@ interface FollowUpBody {
   question?: string;
 }
 
+interface AskBody {
+  question?: string;
+}
+
 export function createAppServer(
   config: AppConfig,
   db: BotDatabase,
@@ -91,7 +95,44 @@ export function createAppServer(
       user: { firstName: user.first_name },
       access: accessPayload(user.id),
       botUsername,
+      history: db.recentGenerations(user.id, 5).map((item) => ({
+        id: item.id,
+        source: item.source,
+        result: item.result,
+        flow: item.flow,
+        createdAt: item.createdAt,
+      })),
     };
+  });
+
+  app.post<{ Body: AskBody }>("/api/mini-app/ask", async (request, reply) => {
+    const user = authenticate(request);
+    const question = request.body?.question?.trim();
+    if (!question || question.length > 1_000) {
+      return reply.code(400).send({ code: "BAD_QUESTION", message: "Напиши вопрос до 1000 символов" });
+    }
+    if (!db.claimAction(user.id, "mini-app-ask", 2)) {
+      return reply.code(429).send({ code: "TOO_FAST", message: "Подожди пару секунд" });
+    }
+    const reservation = db.reserveRequest(user.id);
+    if (!reservation) {
+      return reply.code(402).send({
+        code: "LIMIT_REACHED",
+        message: "Бесплатные запросы закончились",
+        botUsername,
+      });
+    }
+    try {
+      const result = cleanTelegramText(await ai.answerGeneral(question));
+      db.saveGeneration(user.id, "analyze", "auto", question, result);
+      db.commitRequest(reservation.id);
+      db.recordEvent(user.id, "generation_text", "mini_app");
+      analytics.capture(user.id, "generation_text", { input_type: "mini_app" });
+      return { result, access: accessPayload(user.id) };
+    } catch (error) {
+      db.releaseRequest(reservation.id);
+      throw error;
+    }
   });
 
   app.post("/api/mini-app/analyze", async (request, reply) => {

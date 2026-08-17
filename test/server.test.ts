@@ -86,3 +86,34 @@ test("Mini App API requires Telegram auth and isolates follow-up conversations",
   await app.close();
   db.close();
 });
+
+test("Mini App text questions consume one request and appear in history", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "poymi-api-text-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const ai = {
+    answerGeneral: async (question: string) => `Ответ на: ${question}`,
+  } as unknown as AiService;
+  const analytics = { capture: () => undefined } as unknown as ProductAnalytics;
+  const app = createAppServer(config(), db, ai, analytics, "OtvetUmnoAI_bot");
+  const telegramId = 7101;
+
+  const answer = await app.inject({
+    method: "POST",
+    url: "/api/mini-app/ask",
+    headers: { "x-telegram-init-data": initData(telegramId) },
+    payload: { question: "Что такое инфляция?" },
+  });
+  assert.equal(answer.statusCode, 200);
+  assert.equal(answer.json().result, "Ответ на: Что такое инфляция?");
+  assert.equal(answer.json().access.remaining, 4);
+
+  const session = await app.inject({
+    method: "GET",
+    url: "/api/mini-app/session",
+    headers: { "x-telegram-init-data": initData(telegramId) },
+  });
+  assert.equal(session.statusCode, 200);
+  assert.equal(session.json().history[0].source, "Что такое инфляция?");
+  await app.close();
+  db.close();
+});

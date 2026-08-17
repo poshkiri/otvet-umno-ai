@@ -8,6 +8,13 @@ export interface SessionPayload {
   user: { firstName: string };
   access: AccessPayload;
   botUsername: string;
+  history: Array<{
+    id: number;
+    source: string;
+    result: string;
+    flow: string;
+    createdAt: string;
+  }>;
 }
 
 export class ApiError extends Error {
@@ -33,6 +40,15 @@ async function request<T>(path: string, initData: string, init?: RequestInit): P
 
 export const miniAppApi = {
   session: (initData: string) => request<SessionPayload>("/api/mini-app/session", initData),
+  ask: (initData: string, question: string) => request<{ result: string; access: AccessPayload }>(
+    "/api/mini-app/ask",
+    initData,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question }),
+    },
+  ),
   analyze: async (initData: string, file: File, question?: string) => {
     const form = new FormData();
     form.append("image", file);
