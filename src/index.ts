@@ -57,22 +57,14 @@ const configureProfile = async (label: string, update: () => Promise<unknown>): 
 };
 await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
-  { command: "menu", description: "Открыть главное меню" },
-  { command: "image", description: "Создать AI-картинку" },
+  { command: "app", description: "Открыть Mini App" },
   { command: "balance", description: "Проверить лимиты" },
   { command: "paysupport", description: "Поддержка по оплате" },
-  { command: "myid", description: "Показать мой Telegram ID" },
   { command: "help", description: "Как пользоваться" },
 ]));
-if (config.MINI_APP_URL) {
-  await configureProfile("кнопку Mini App", () => bot.api.setChatMenuButton({
-    menu_button: {
-      type: "web_app",
-      text: "📷 Открыть Пойми AI",
-      web_app: { url: config.MINI_APP_URL! },
-    },
-  }));
-}
+await configureProfile("кнопку меню", () => bot.api.setChatMenuButton({
+  menu_button: { type: "commands" },
+}));
 await configureProfile("короткое описание", () => bot.api.setMyShortDescription(
   "✨ Фото, голос, учёба, тексты и изображения. Канал: @PoymiAI_news",
 ));

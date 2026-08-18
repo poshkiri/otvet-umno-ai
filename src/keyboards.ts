@@ -4,10 +4,10 @@ import { CREDIT_PACKAGES } from "./payments.js";
 
 export function mainMenu(miniAppUrl = process.env.MINI_APP_URL): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  if (miniAppUrl?.trim()) keyboard.webApp("📷 Открыть сканер", miniAppUrl.trim()).row();
+  if (miniAppUrl?.trim()) keyboard.webApp("Открыть Mini App", miniAppUrl.trim()).row();
   return keyboard
-    .text("🤖 Что умеет бот", "menu:capabilities")
-    .text("👤 Мой кабинет", "menu:profile");
+    .text("Личный кабинет", "menu:profile")
+    .text("Тарифы", "menu:tariffs");
 }
 
 export function paywallMenu(): InlineKeyboard {
@@ -72,24 +72,20 @@ export function refinementsMenu(): InlineKeyboard {
 
 export function profileMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⚡ Мои лимиты", "menu:balance")
-    .text("⭐ Plus и запросы", "menu:tariffs").row()
-    .text("🕘 История", "menu:history")
-    .text("🔖 Сохранённое", "menu:favorites").row()
-    .text("👥 Пригласить друга", "menu:invite").row()
-    .text("🧾 Мои покупки", "menu:payments").row()
-    .text("← В меню", "menu:main");
+    .text("Мои лимиты", "menu:balance")
+    .text("Тарифы", "menu:tariffs").row()
+    .text("История", "menu:history")
+    .text("Покупки", "menu:payments").row()
+    .text("Назад", "menu:main");
 }
 
 export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Оформить Plus", "subscribe:plus").row()
-    .text("❓ Как купить Stars", "stars:help").row()
-    .text(`${CREDIT_PACKAGES.start.credits} запросов · ${CREDIT_PACKAGES.start.stars} ⭐`, "buy:start").row()
-    .text(`${CREDIT_PACKAGES.plus.credits} запросов · ${CREDIT_PACKAGES.plus.stars} ⭐`, "buy:plus").row()
-    .text(`${CREDIT_PACKAGES.pro.credits} запросов · ${CREDIT_PACKAGES.pro.stars} ⭐`, "buy:pro").row()
-    .text("🧾 Мои покупки", "menu:payments").row()
-    .text("← В кабинет", "menu:profile");
+    .text("Plus · 299 Stars", "subscribe:plus").row()
+    .text("Разовые пакеты", "menu:credit-packs").row()
+    .text("Как купить Stars", "stars:help")
+    .text("Мои покупки", "menu:payments").row()
+    .text("Назад", "menu:profile");
 }
 
 export function imageResultMenu(): InlineKeyboard {

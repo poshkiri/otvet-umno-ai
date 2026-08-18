@@ -378,6 +378,16 @@ export function createBot(
     );
   });
 
+  bot.command("app", async (ctx) => {
+    if (!config.MINI_APP_URL) {
+      await ctx.reply("Mini App временно недоступен. Можно продолжать пользоваться ботом прямо в этом чате.");
+      return;
+    }
+    await ctx.reply("Открой Пойми AI: фото, голос, вопросы и история в одном месте.", {
+      reply_markup: new InlineKeyboard().webApp("Открыть Mini App", config.MINI_APP_URL),
+    });
+  });
+
   bot.callbackQuery("menu:capabilities", async (ctx) => {
     await ctx.answerCallbackQuery();
     await clearCallbackKeyboard(ctx);
