@@ -51,6 +51,7 @@ export function createAppServer(
 ) {
   const app = Fastify({ logger: true, bodyLimit: MAX_IMAGE_BYTES + 64 * 1024 });
   const webRoot = resolve(process.cwd(), "webapp", "dist");
+  const plategaCheckoutEnabled = platega.enabled && config.PLATEGA_CHECKOUT_ENABLED;
 
   app.register(multipart, {
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 2 },
@@ -112,7 +113,7 @@ export function createAppServer(
       access: accessPayload(user.id),
       botUsername,
       payments: {
-        plategaEnabled: platega.enabled,
+        plategaEnabled: plategaCheckoutEnabled,
         packages: Object.values(RUB_CREDIT_PACKAGES),
         recent: db.recentExternalPayments(user.id, 5),
       },
@@ -129,7 +130,7 @@ export function createAppServer(
   app.post<{ Body: CreatePaymentBody }>("/api/mini-app/payments/platega", async (request, reply) => {
     const user = authenticate(request);
     const packageId = request.body?.packageId;
-    if (!platega.enabled) {
+    if (!plategaCheckoutEnabled) {
       return reply.code(503).send({ code: "PAYMENTS_UNAVAILABLE", message: "Оплата картой пока недоступна" });
     }
     if (!packageId || !isCreditPackageId(packageId)) {

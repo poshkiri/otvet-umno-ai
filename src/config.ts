@@ -53,6 +53,10 @@ const schema = z.object({
     z.string().min(20).optional(),
   ),
   PLATEGA_API_URL: z.string().url().default("https://app.platega.io"),
+  PLATEGA_CHECKOUT_ENABLED: z.preprocess(
+    (value) => value === true || value === "true",
+    z.boolean(),
+  ),
 });
 
 export type AppConfig = z.infer<typeof schema>;

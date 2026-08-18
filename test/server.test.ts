@@ -50,6 +50,7 @@ function config(): AppConfig {
     PORT: 3_000,
     MINI_APP_AUTH_MAX_AGE_SECONDS: 86_400,
     PLATEGA_API_URL: "https://app.platega.io",
+    PLATEGA_CHECKOUT_ENABLED: false,
   };
 }
 
@@ -120,6 +121,44 @@ test("Mini App text questions consume one request and appear in history", async 
   db.close();
 });
 
+test("Platega checkout stays closed until production access is approved", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "poymi-api-checkout-closed-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const gateway: PlategaGateway = {
+    enabled: true,
+    createPayment: async () => { throw new Error("must not be called"); },
+    getTransaction: async () => { throw new Error("must not be called"); },
+    verifyCallbackHeaders: () => true,
+  };
+  const app = createAppServer(
+    { ...config(), RENDER_EXTERNAL_URL: "https://poymi-ai.onrender.com" },
+    db,
+    {} as AiService,
+    { capture: () => undefined } as unknown as ProductAnalytics,
+    "OtvetUmnoAI_bot",
+    gateway,
+  );
+  const telegramId = 7151;
+
+  const session = await app.inject({
+    method: "GET",
+    url: "/api/mini-app/session",
+    headers: { "x-telegram-init-data": initData(telegramId) },
+  });
+  assert.equal(session.statusCode, 200);
+  assert.equal(session.json().payments.plategaEnabled, false);
+
+  const payment = await app.inject({
+    method: "POST",
+    url: "/api/mini-app/payments/platega",
+    headers: { "x-telegram-init-data": initData(telegramId) },
+    payload: { packageId: "start" },
+  });
+  assert.equal(payment.statusCode, 503);
+  await app.close();
+  db.close();
+});
+
 test("Platega callback verifies credentials and credits a payment exactly once", async () => {
   const directory = mkdtempSync(join(tmpdir(), "poymi-api-platega-"));
   const db = new BotDatabase(join(directory, "test.db"), 5);
@@ -144,6 +183,7 @@ test("Platega callback verifies credentials and credits a payment exactly once",
   const appConfig = {
     ...config(),
     RENDER_EXTERNAL_URL: "https://poymi-ai.onrender.com",
+    PLATEGA_CHECKOUT_ENABLED: true,
   };
   const app = createAppServer(appConfig, db, ai, analytics, "OtvetUmnoAI_bot", gateway);
   const telegramId = 7201;

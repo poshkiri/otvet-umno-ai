@@ -61,3 +61,5 @@ services:
         sync: false
       - key: PLATEGA_API_URL
         value: https://app.platega.io
+      - key: PLATEGA_CHECKOUT_ENABLED
+        value: "false"

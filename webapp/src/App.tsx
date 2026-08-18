@@ -7,14 +7,17 @@ import {
   FileTextIcon,
   Link2Icon,
   HomeIcon,
+  LockClosedIcon,
   PaperPlaneIcon,
   PersonIcon,
   PlayIcon,
+  QuestionMarkCircledIcon,
+  ReaderIcon,
   ReloadIcon,
   SpeakerLoudIcon,
 } from "@radix-ui/react-icons";
 import { AnimatePresence, motion } from "motion/react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, miniAppApi, type AccessPayload, type SessionPayload } from "./api";
 import { telegramWebApp } from "./telegram";
 
@@ -26,6 +29,20 @@ interface ResultSection {
 }
 
 type HistoryItem = SessionPayload["history"][number];
+type InfoPageId = "privacy" | "terms" | "tariffs" | "support";
+
+interface InfoSection {
+  title: string;
+  paragraphs?: string[];
+  bullets?: string[];
+}
+
+interface InfoPageContent {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  sections: InfoSection[];
+}
 
 interface SpeechRecognitionEventLike {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
@@ -90,7 +107,7 @@ const DEMO_SESSION: SessionPayload = {
   access: { remaining: 5, label: "5 запросов", plan: "free" },
   botUsername: "OtvetUmnoAI_bot",
   payments: {
-    plategaEnabled: true,
+    plategaEnabled: false,
     packages: [
       { id: "start", title: "50 запросов", credits: 50, rubles: 199 },
       { id: "plus", title: "200 запросов", credits: 200, rubles: 649 },
@@ -99,6 +116,118 @@ const DEMO_SESSION: SessionPayload = {
     recent: [],
   },
   history: DEMO_HISTORY,
+};
+
+const INFO_PAGES: Record<InfoPageId, InfoPageContent> = {
+  privacy: {
+    eyebrow: "Документы",
+    title: "Политика конфиденциальности",
+    intro: "Объясняем, какие данные нужны Пойми AI и как мы с ними работаем.",
+    sections: [
+      {
+        title: "Какие данные обрабатываются",
+        bullets: [
+          "Telegram ID, имя и username, если они указаны в аккаунте.",
+          "Ваши вопросы, фотографии, голосовые сообщения и результаты обработки.",
+          "История запросов, лимиты, идентификаторы и статусы платежей.",
+          "Технические события, необходимые для безопасности и стабильной работы.",
+        ],
+      },
+      {
+        title: "Зачем это нужно",
+        paragraphs: ["Данные используются, чтобы отвечать на запросы, хранить историю, учитывать лимиты, обрабатывать оплату, помогать при обращениях и улучшать сервис."],
+      },
+      {
+        title: "Кому передаются данные",
+        paragraphs: ["Только в объёме, необходимом для работы сервиса: Telegram обеспечивает интерфейс, провайдер AI обрабатывает запросы, Render размещает приложение, а Platega обрабатывает платежи. Пойми AI не хранит данные банковской карты."],
+      },
+      {
+        title: "Хранение и удаление",
+        paragraphs: ["Данные хранятся, пока это необходимо для работы аккаунта, поддержки, безопасности и учёта операций. Запросить удаление своих данных можно через поддержку. Информация о проведённых платежах может храниться дольше, если этого требуют правила учёта."],
+      },
+      {
+        title: "Ваши права",
+        paragraphs: ["Вы можете запросить сведения о своих данных, исправить их или попросить удалить. Для этого откройте страницу поддержки и укажите свой Telegram ID."],
+      },
+    ],
+  },
+  terms: {
+    eyebrow: "Документы",
+    title: "Пользовательское соглашение",
+    intro: "Правила использования сервиса Пойми AI. Продолжая работу, пользователь принимает эти условия.",
+    sections: [
+      {
+        title: "Что делает сервис",
+        paragraphs: ["Пойми AI отвечает на текстовые и голосовые вопросы, анализирует изображения, помогает с учёбой и текстами, создаёт и изменяет изображения. Ответы формируются автоматически и могут содержать неточности."],
+      },
+      {
+        title: "Ответственность пользователя",
+        bullets: [
+          "Не отправлять незаконные материалы и чужие персональные данные без разрешения.",
+          "Не использовать сервис для обмана, вреда, обхода закона или нарушения чужих прав.",
+          "Проверять важные медицинские, юридические, финансовые и иные решения у профильного специалиста.",
+        ],
+      },
+      {
+        title: "Платные возможности",
+        paragraphs: ["Перед оплатой пользователь видит состав пакета, срок действия и окончательную цену. Запросы начисляются после подтверждения платежа. Разовые пакеты не сгорают, а условия Plus действуют 30 дней."],
+      },
+      {
+        title: "Возвраты и спорные операции",
+        paragraphs: ["Если запросы не начислились, платёж проведён ошибочно или услуга не была оказана, обратитесь в поддержку и сообщите ID платежа. Обращение рассматривается с учётом статуса операции и фактически использованного объёма услуги."],
+      },
+      {
+        title: "Изменения и доступ",
+        paragraphs: ["Функции, цены и условия могут обновляться. Актуальная версия всегда опубликована в Mini App. При нарушении правил доступ к сервису может быть ограничен."],
+      },
+    ],
+  },
+  tariffs: {
+    eyebrow: "Оплата",
+    title: "Тарифы и цены",
+    intro: "Все цены показываются до оплаты. Скрытых списаний нет.",
+    sections: [
+      {
+        title: "Бесплатно",
+        bullets: ["5 AI-запросов после первого запуска.", "1 пробное создание изображения."],
+      },
+      {
+        title: "Plus — 299 Stars на 30 дней",
+        bullets: ["50 AI-единиц.", "До 20 созданий или изменений изображений.", "Продление можно отключить в Telegram."],
+      },
+      {
+        title: "Разовые пакеты в Telegram",
+        bullets: ["50 запросов — 149 Stars.", "200 запросов — 549 Stars.", "500 запросов — 1299 Stars."],
+      },
+      {
+        title: "Как списываются запросы",
+        paragraphs: ["Обычный ответ или разбор фотографии расходует один запрос. Создание и изменение изображений учитывается по отдельному лимиту тарифа. Разовые запросы не сгорают."],
+      },
+      {
+        title: "Для проверки проекта",
+        paragraphs: ["Код согласования: Platega test. После выдачи рабочих доступов эта строка будет удалена."],
+      },
+    ],
+  },
+  support: {
+    eyebrow: "Помощь",
+    title: "Поддержка",
+    intro: "Поможем, если запросы не начислились, платёж завис или в сервисе появилась ошибка.",
+    sections: [
+      {
+        title: "Как обратиться",
+        paragraphs: ["Откройте бота @OtvetUmnoAI_bot, отправьте команду /paysupport и одним сообщением опишите проблему."],
+      },
+      {
+        title: "Что указать",
+        bullets: ["Telegram ID или username.", "ID платежа из раздела «Мои покупки».", "Что произошло и когда.", "Скриншот ошибки, если он есть."],
+      },
+      {
+        title: "Важно",
+        paragraphs: ["Никому не отправляйте код из SMS, пароль, данные карты или секретные ключи. Для проверки платежа поддержке достаточно ID операции."],
+      },
+    ],
+  },
 };
 
 export default function App() {
@@ -354,6 +483,9 @@ export default function App() {
     setFollowUps([]);
   };
 
+  const infoPageId = infoPageFromPath(window.location.pathname);
+  if (infoPageId) return <InfoPage pageId={infoPageId} />;
+
   return (
     <div className={`app ${isMobilePreview ? "mobile-preview" : ""}`}>
       <AnimatePresence mode="wait">
@@ -510,16 +642,20 @@ function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }:
 
         <section className="packages-section">
           <div className="section-heading"><h2>Добавить запросы</h2><span>Не сгорают</span></div>
-          <div className="package-list">
-            {session.payments.packages.map((item) => (
-              <button type="button" key={item.id} disabled={!session.payments.plategaEnabled || Boolean(busy)} onClick={() => onBuy(item.id)}>
-                <span><strong>{item.credits}</strong><small> запросов</small></span>
-                <b>{busy === item.id ? "Открываю…" : `${item.rubles} ₽`}</b>
-                <ChevronRightIcon />
-              </button>
-            ))}
-          </div>
-          {!session.payments.plategaEnabled && <p className="payment-hint">Оплата картой скоро появится. Stars уже доступны.</p>}
+          {session.payments.plategaEnabled ? (
+            <div className="package-list">
+              {session.payments.packages.map((item) => (
+                <button type="button" key={item.id} disabled={Boolean(busy)} onClick={() => onBuy(item.id)}>
+                  <span><strong>{item.credits}</strong><small> запросов</small></span>
+                  <b>{busy === item.id ? "Открываю…" : `${item.rubles} ₽`}</b>
+                  <ChevronRightIcon />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button className="stars-packages" type="button" onClick={onStars}>Открыть пакеты в Telegram <ChevronRightIcon /></button>
+          )}
+          {!session.payments.plategaEnabled && <p className="payment-hint">Цифровые услуги внутри Telegram оплачиваются в Stars.</p>}
           {notice && <p className="payment-notice">{notice}</p>}
           {hasPending && <button className="check-payment" type="button" disabled={Boolean(busy)} onClick={onCheck}>Проверить оплату</button>}
         </section>
@@ -532,10 +668,59 @@ function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }:
             ))}
           </section>
         )}
+
+        <section className="documents-section">
+          <div className="section-heading"><h2>Документы и помощь</h2></div>
+          <div className="document-list">
+            <InfoLink href="/app/tariffs" icon={<ReaderIcon />} title="Тарифы и цены" />
+            <InfoLink href="/app/support" icon={<QuestionMarkCircledIcon />} title="Поддержка" />
+            <InfoLink href="/app/privacy" icon={<LockClosedIcon />} title="Конфиденциальность" />
+            <InfoLink href="/app/terms" icon={<FileTextIcon />} title="Условия использования" />
+          </div>
+        </section>
       </div>
       <BottomNav active="profile" onHome={onHome} onProfile={() => undefined} />
     </motion.main>
   );
+}
+
+function InfoLink({ href, icon, title }: { href: string; icon: ReactNode; title: string }) {
+  return <a href={href}><span>{icon}</span><strong>{title}</strong><ChevronRightIcon /></a>;
+}
+
+function InfoPage({ pageId }: { pageId: InfoPageId }) {
+  const page = INFO_PAGES[pageId];
+  return (
+    <main className="info-screen">
+      <header className="info-topbar">
+        <a href="/app/" aria-label="Вернуться в приложение"><ArrowLeftIcon /></a>
+        <Brand compact />
+        <span />
+      </header>
+      <article className="info-content">
+        <span className="info-eyebrow">{page.eyebrow}</span>
+        <h1>{page.title}</h1>
+        <p className="info-intro">{page.intro}</p>
+        <p className="info-date">Действует с 18 августа 2026 года</p>
+        {page.sections.map((section) => (
+          <section key={section.title}>
+            <h2>{section.title}</h2>
+            {section.paragraphs?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {section.bullets && <ul>{section.bullets.map((item) => <li key={item}>{item}</li>)}</ul>}
+          </section>
+        ))}
+        {pageId === "support" && (
+          <a className="support-link" href="https://t.me/OtvetUmnoAI_bot" target="_blank" rel="noreferrer">Открыть поддержку в Telegram</a>
+        )}
+        <footer>Пойми AI · @OtvetUmnoAI_bot</footer>
+      </article>
+    </main>
+  );
+}
+
+function infoPageFromPath(pathname: string): InfoPageId | undefined {
+  const slug = pathname.replace(/\/+$/, "").split("/").pop();
+  return slug && slug in INFO_PAGES ? slug as InfoPageId : undefined;
 }
 
 function BottomNav({ active, onHome, onProfile }: { active: "home" | "profile"; onHome: () => void; onProfile: () => void }) {
