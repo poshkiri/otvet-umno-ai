@@ -3,6 +3,8 @@ import {
   CameraIcon,
   CheckCircledIcon,
   ChevronRightIcon,
+  ChatBubbleIcon,
+  ClockIcon,
   ExclamationTriangleIcon,
   FileTextIcon,
   Link2Icon,
@@ -10,18 +12,18 @@ import {
   LockClosedIcon,
   PaperPlaneIcon,
   PersonIcon,
-  PlayIcon,
   QuestionMarkCircledIcon,
   ReaderIcon,
   ReloadIcon,
   SpeakerLoudIcon,
+  StarIcon,
 } from "@radix-ui/react-icons";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, miniAppApi, type AccessPayload, type SessionPayload } from "./api";
 import { telegramWebApp } from "./telegram";
 
-type View = "home" | "profile" | "working" | "result" | "limit" | "error";
+type View = "home" | "history" | "profile" | "working" | "result" | "limit" | "error";
 
 interface ResultSection {
   title: string;
@@ -107,7 +109,7 @@ const DEMO_SESSION: SessionPayload = {
   access: { remaining: 5, label: "5 запросов", plan: "free" },
   botUsername: "OtvetUmnoAI_bot",
   payments: {
-    plategaEnabled: false,
+    plategaEnabled: true,
     packages: [
       { id: "start", title: "50 запросов", credits: 50, rubles: 199 },
       { id: "plus", title: "200 запросов", credits: 200, rubles: 649 },
@@ -431,7 +433,11 @@ export default function App() {
 
   const askFollowUp = async (event: FormEvent) => {
     event.preventDefault();
-    const trimmed = question.trim();
+    await submitFollowUp(question);
+  };
+
+  const submitFollowUp = async (text: string) => {
+    const trimmed = text.trim();
     if (!trimmed || sending) return;
     setSending(true);
     setQuestion("");
@@ -507,6 +513,15 @@ export default function App() {
             onSubmit={submitHome}
             onVoice={startVoiceInput}
             onOpenHistory={openHistoryItem}
+            onHistory={() => setView("history")}
+            onProfile={() => setView("profile")}
+          />
+        )}
+        {view === "history" && (
+          <HistoryView
+            history={history}
+            onOpen={openHistoryItem}
+            onHome={resetHome}
             onProfile={() => setView("profile")}
           />
         )}
@@ -516,6 +531,7 @@ export default function App() {
             busy={paymentBusy}
             notice={paymentNotice}
             onHome={resetHome}
+            onHistory={() => setView("history")}
             onStars={openPlans}
             onBuy={buyWithPlatega}
             onCheck={checkPendingPayment}
@@ -532,6 +548,7 @@ export default function App() {
             sending={sending}
             onQuestion={setQuestion}
             onSubmit={askFollowUp}
+            onQuickAction={submitFollowUp}
             onBack={resetHome}
           />
         )}
@@ -550,7 +567,7 @@ export default function App() {
   );
 }
 
-function HomeView({ access, history, previewUrl, selectedFile, question, listening, onQuestion, onChoosePhoto, onAnalyze, onSubmit, onVoice, onOpenHistory, onProfile }: {
+function HomeView({ access, history, previewUrl, selectedFile, question, listening, onQuestion, onChoosePhoto, onAnalyze, onSubmit, onVoice, onOpenHistory, onHistory, onProfile }: {
   access: AccessPayload;
   history: HistoryItem[];
   previewUrl: string;
@@ -563,9 +580,10 @@ function HomeView({ access, history, previewUrl, selectedFile, question, listeni
   onSubmit: (event: FormEvent) => void;
   onVoice: () => void;
   onOpenHistory: (item: HistoryItem) => void;
+  onHistory: () => void;
   onProfile: () => void;
 }) {
-  const visibleHistory = history.slice(0, 2);
+  const latest = history[0];
   return (
     <motion.main className="home-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <header className="topbar">
@@ -589,64 +607,87 @@ function HomeView({ access, history, previewUrl, selectedFile, question, listeni
           <button className={`voice-button ${listening ? "is-listening" : ""}`} type="button" onClick={onVoice} aria-label="Задать вопрос голосом"><SpeakerLoudIcon /></button>
           <button className="send-button" type="submit" disabled={!question.trim() && !selectedFile} aria-label="Отправить"><PaperPlaneIcon /></button>
         </form>
-        <p className="example">Например: что это, как использовать, реши задачу</p>
+        <p className="example">Фото, документ, задача или обычный вопрос</p>
 
-        <section className="history-section">
+        <section className="recent-section">
           <div className="section-heading">
-            <h2>Недавнее</h2>
-            <span>Все <ChevronRightIcon /></span>
+            <h2>Продолжить</h2>
+            <button type="button" onClick={onHistory}>Вся история <ChevronRightIcon /></button>
           </div>
-          <div className="history-list">
-            {visibleHistory.length ? visibleHistory.map((item, index) => (
-              <button type="button" className="history-row" key={item.id} onClick={() => onOpenHistory(item)}>
-                <span className={`history-visual ${index === 1 ? "voice" : "photo"}`}>
-                  {index === 0 ? <img src="/app/math-problem.jpg" alt="Фотография учебной задачи" /> : <><PlayIcon /><SpeakerLoudIcon /></>}
-                </span>
-                <span className="history-copy">
-                  <strong>{index === 0 ? "Скриншот задачи" : "Голосовой вопрос"}</strong>
-                  <span>{index === 0 ? "Решите неравенство" : item.source}</span>
-                  <time>{formatHistoryDate(item.createdAt)}</time>
-                </span>
-                <ChevronRightIcon />
-              </button>
-            )) : <p className="empty-history">Здесь появятся ваши последние вопросы и разборы.</p>}
-          </div>
+          {latest ? (
+            <button type="button" className="recent-row" onClick={() => onOpenHistory(latest)}>
+              <span className="recent-icon"><ClockIcon /></span>
+              <span><strong>{historyTitle(latest)}</strong><small>{latest.source}</small></span>
+              <ChevronRightIcon />
+            </button>
+          ) : <p className="empty-history">Первый ответ появится здесь.</p>}
         </section>
       </section>
-      <BottomNav active="home" onHome={() => undefined} onProfile={onProfile} />
+      <BottomNav active="home" onHome={() => undefined} onHistory={onHistory} onProfile={onProfile} />
     </motion.main>
   );
 }
 
-function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }: {
+function HistoryView({ history, onOpen, onHome, onProfile }: {
+  history: HistoryItem[];
+  onOpen: (item: HistoryItem) => void;
+  onHome: () => void;
+  onProfile: () => void;
+}) {
+  return (
+    <motion.main className="history-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <header className="section-topbar"><div><span>Ваши ответы</span><h1>История</h1></div><ClockIcon /></header>
+      <div className="history-scroll">
+        {history.length ? history.map((item) => (
+          <button type="button" className="history-card" key={item.id} onClick={() => onOpen(item)}>
+            <span className="history-type">{item.source.toLowerCase().includes("фото") ? <CameraIcon /> : <ChatBubbleIcon />}</span>
+            <span className="history-copy"><strong>{historyTitle(item)}</strong><span>{item.source}</span><time>{formatHistoryDate(item.createdAt)}</time></span>
+            <ChevronRightIcon />
+          </button>
+        )) : (
+          <div className="history-empty"><ClockIcon /><h2>История пока пустая</h2><p>Спросите что-нибудь или отправьте фотографию.</p><button type="button" onClick={onHome}>Начать</button></div>
+        )}
+      </div>
+      <BottomNav active="history" onHome={onHome} onHistory={() => undefined} onProfile={onProfile} />
+    </motion.main>
+  );
+}
+
+function ProfileView({ session, busy, notice, onHome, onHistory, onStars, onBuy, onCheck }: {
   session: SessionPayload;
   busy: string;
   notice: string;
   onHome: () => void;
+  onHistory: () => void;
   onStars: () => void;
   onBuy: (packageId: string) => void;
   onCheck: () => void;
 }) {
+  const [paymentMode, setPaymentMode] = useState<"stars" | "rubles">(session.payments.plategaEnabled ? "rubles" : "stars");
   const planLabel = session.access.plan === "pro" ? "Безлимит" : session.access.plan === "plus" ? "Plus" : "Бесплатный";
   const hasPending = session.payments.recent.some((payment) => payment.status === "pending") || Boolean(window.localStorage.getItem("poymi-pending-payment"));
   return (
     <motion.main className="profile-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <header className="topbar"><Brand /><span className="profile-kicker">Профиль</span></header>
+      <header className="section-topbar"><div><span>Аккаунт</span><h1>Профиль</h1></div><PersonIcon /></header>
       <div className="profile-scroll">
         <section className="profile-hero">
           <div className="profile-avatar">{session.user.firstName.slice(0, 1).toUpperCase()}</div>
           <div><h1>{session.user.firstName}</h1><p>{planLabel} тариф</p></div>
-          <strong>{session.access.remaining === null ? "∞" : session.access.remaining}<small> запросов</small></strong>
         </section>
 
-        <section className="plus-band">
-          <div><span>Пойми AI Plus</span><h2>Больше возможностей на 30 дней</h2><p>50 AI-запросов и до 20 изображений</p></div>
-          <button type="button" onClick={onStars}>Открыть Plus</button>
+        <section className="balance-panel">
+          <span>Доступно сейчас</span>
+          <strong>{session.access.remaining === null ? "Безлимит" : `${session.access.remaining} запросов`}</strong>
+          <small>{planLabel} тариф</small>
         </section>
 
         <section className="packages-section">
-          <div className="section-heading"><h2>Добавить запросы</h2><span>Не сгорают</span></div>
-          {session.payments.plategaEnabled ? (
+          <div className="section-heading"><h2>Пополнить баланс</h2><span>Запросы не сгорают</span></div>
+          <div className="payment-tabs" role="tablist" aria-label="Способ оплаты">
+            <button className={paymentMode === "stars" ? "active" : ""} type="button" onClick={() => setPaymentMode("stars")}><StarIcon /> Stars</button>
+            {session.payments.plategaEnabled && <button className={paymentMode === "rubles" ? "active" : ""} type="button" onClick={() => setPaymentMode("rubles")}>₽ Карта / СБП</button>}
+          </div>
+          {paymentMode === "rubles" && session.payments.plategaEnabled ? (
             <div className="package-list">
               {session.payments.packages.map((item) => (
                 <button type="button" key={item.id} disabled={Boolean(busy)} onClick={() => onBuy(item.id)}>
@@ -657,9 +698,8 @@ function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }:
               ))}
             </div>
           ) : (
-            <button className="stars-packages" type="button" onClick={onStars}>Открыть пакеты в Telegram <ChevronRightIcon /></button>
+            <div className="stars-offer"><div><strong>Plus на 30 дней</strong><span>50 AI-запросов и до 20 изображений</span></div><button type="button" onClick={onStars}>Выбрать в Telegram</button></div>
           )}
-          {!session.payments.plategaEnabled && <p className="payment-hint">Цифровые услуги внутри Telegram оплачиваются в Stars.</p>}
           {notice && <p className="payment-notice">{notice}</p>}
           {hasPending && <button className="check-payment" type="button" disabled={Boolean(busy)} onClick={onCheck}>Проверить оплату</button>}
         </section>
@@ -683,7 +723,7 @@ function ProfileView({ session, busy, notice, onHome, onStars, onBuy, onCheck }:
           </div>
         </section>
       </div>
-      <BottomNav active="profile" onHome={onHome} onProfile={() => undefined} />
+      <BottomNav active="profile" onHome={onHome} onHistory={onHistory} onProfile={() => undefined} />
     </motion.main>
   );
 }
@@ -727,9 +767,10 @@ function infoPageFromPath(pathname: string): InfoPageId | undefined {
   return slug && slug in INFO_PAGES ? slug as InfoPageId : undefined;
 }
 
-function BottomNav({ active, onHome, onProfile }: { active: "home" | "profile"; onHome: () => void; onProfile: () => void }) {
+function BottomNav({ active, onHome, onHistory, onProfile }: { active: "home" | "history" | "profile"; onHome: () => void; onHistory: () => void; onProfile: () => void }) {
   return <nav className="bottom-nav" aria-label="Разделы">
     <button className={active === "home" ? "active" : ""} type="button" onClick={onHome}><HomeIcon /><span>Главная</span></button>
+    <button className={active === "history" ? "active" : ""} type="button" onClick={onHistory}><ClockIcon /><span>История</span></button>
     <button className={active === "profile" ? "active" : ""} type="button" onClick={onProfile}><PersonIcon /><span>Профиль</span></button>
   </nav>;
 }
@@ -746,7 +787,7 @@ function WorkingView({ previewUrl, text }: { previewUrl: string; text: string })
   );
 }
 
-function ResultView({ access, previewUrl, result, followUps, question, sending, onQuestion, onSubmit, onBack }: {
+function ResultView({ access, previewUrl, result, followUps, question, sending, onQuestion, onSubmit, onQuickAction, onBack }: {
   access: AccessPayload;
   previewUrl: string;
   result: string;
@@ -755,6 +796,7 @@ function ResultView({ access, previewUrl, result, followUps, question, sending, 
   sending: boolean;
   onQuestion: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
+  onQuickAction: (question: string) => void;
   onBack: () => void;
 }) {
   const sections = parseResult(result);
@@ -779,6 +821,10 @@ function ResultView({ access, previewUrl, result, followUps, question, sending, 
             <article><h2>{section.title}</h2><p>{section.body}</p></article>
           </section>
         ))}
+        <div className="result-actions" aria-label="Продолжить ответ">
+          <button type="button" disabled={sending} onClick={() => onQuickAction("Объясни это ещё проще и короче")}>Объяснить проще</button>
+          <button type="button" disabled={sending} onClick={() => onQuickAction("Что мне делать дальше? Дай конкретные шаги")}>Что делать дальше</button>
+        </div>
         {followUps.map((item, index) => (
           <section className="follow-up-answer" key={`${item.question}-${index}`}><small>Ваш вопрос</small><h2>{item.question}</h2><p>{item.answer}</p></section>
         ))}
@@ -831,6 +877,13 @@ function formatHistoryDate(value: string): string {
   if (Number.isNaN(date.getTime())) return "Недавно";
   const isToday = date.toDateString() === new Date().toDateString();
   return `${isToday ? "Сегодня" : "Вчера"}, ${date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function historyTitle(item: HistoryItem): string {
+  const source = item.source.trim();
+  if (source.toLowerCase().includes("фото")) return "Разбор фотографии";
+  if (source.length <= 34) return source;
+  return `${source.slice(0, 34).trim()}…`;
 }
 
 function wait(milliseconds: number) {
