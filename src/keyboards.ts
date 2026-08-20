@@ -6,7 +6,7 @@ export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Личный кабинет", "menu:profile")
+    .text("Мой аккаунт", "menu:profile")
     .text("Тарифы", "menu:tariffs").row()
     .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL);
 }
@@ -31,7 +31,7 @@ export function creditPacksMenu(): InlineKeyboard {
       `${CREDIT_PACKAGES.pro.credits} запросов · ${CREDIT_PACKAGES.pro.stars} ⭐`,
       "buy:pro",
     ).row()
-    .text("← Назад", "menu:paywall");
+    .text("← К тарифам", "menu:tariffs");
 }
 
 export function categoryMenu(flow: FlowId): InlineKeyboard {

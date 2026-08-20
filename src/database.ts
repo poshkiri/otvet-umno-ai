@@ -560,10 +560,11 @@ export class BotDatabase {
   ): SubscriptionRequestAllowance {
     const access = this.getSubscriptionAccess(telegramId, now);
     if (!access.active) return { active: false, used: 0, limit, remaining: 0 };
+    const periodStart = Math.max(now - windowSeconds, (access.periodEnd ?? now) - windowSeconds);
     const usage = this.db.prepare(`
       SELECT COALESCE(SUM(units), 0) AS used, MIN(created_at) AS oldest FROM subscription_request_usage
-      WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
-    `).get(telegramId, now - windowSeconds) as { used: number; oldest: number | null };
+      WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at >= ?
+    `).get(telegramId, periodStart) as { used: number; oldest: number | null };
     return {
       active: true,
       used: usage.used,
@@ -819,6 +820,9 @@ export class BotDatabase {
     const tier: ImageTier = user?.plan === "pro" ? "pro" : subscription.active ? "plus" : "free";
     const limit = tier === "pro" ? limits.pro : tier === "plus" ? limits.plus : 1;
     const cutoff = now - limits.windowSeconds;
+    const userCutoff = tier === "plus"
+      ? Math.max(cutoff, (subscription.periodEnd ?? now) - 30 * 24 * 60 * 60)
+      : cutoff;
     const global = this.db.prepare(`
       SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM image_generations
       WHERE status IN ('reserved', 'completed') AND created_at > ?
@@ -841,8 +845,8 @@ export class BotDatabase {
     }
     const usage = this.db.prepare(`
       SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM image_generations
-      WHERE telegram_id = ? AND status IN ('reserved', 'completed') AND created_at > ?
-    `).get(telegramId, cutoff) as { used: number; oldest: number | null };
+      WHERE telegram_id = ? AND status IN ('reserved', 'completed') AND created_at >= ?
+    `).get(telegramId, userCutoff) as { used: number; oldest: number | null };
     return {
       allowed: usage.used < limit,
       tier,

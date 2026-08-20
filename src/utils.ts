@@ -21,6 +21,13 @@ export function displayName(firstName?: string): string {
   return firstName?.trim() || "друг";
 }
 
+export function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function cleanTelegramText(text: string): string {
   return wellFormedText(text)
     .replace(/\*\*/g, "")

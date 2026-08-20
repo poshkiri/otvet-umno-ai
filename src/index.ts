@@ -57,27 +57,28 @@ const configureProfile = async (label: string, update: () => Promise<unknown>): 
 };
 await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
-  { command: "balance", description: "Проверить лимиты" },
-  { command: "paysupport", description: "Поддержка и вопросы по оплате" },
-  { command: "help", description: "Как пользоваться" },
+  { command: "balance", description: "Мои запросы и лимиты" },
+  { command: "paysupport", description: "Написать в поддержку" },
+  { command: "help", description: "Примеры задач для бота" },
 ]));
 await configureProfile("кнопку меню", () => bot.api.setChatMenuButton({
   menu_button: { type: "commands" },
 }));
 await configureProfile("короткое описание", () => bot.api.setMyShortDescription(
-  "✨ Фото, голос, учёба, тексты и изображения. Канал: @PoymiAI_news",
+  `Отправь фото, голос или вопрос — получи простое объяснение. ${config.FREE_REQUEST_LIMIT} запросов бесплатно.`,
 ));
 await configureProfile("полное описание", () => bot.api.setMyDescription(
   [
-    "✨ Пойми AI — помощник на каждый день",
+    "✨ Покажи или спроси — Пойми AI разберётся",
     "",
-    "📸 Понимает фотографии и скриншоты",
-    "🎙 Отвечает на голосовые вопросы",
-    "🎓 Помогает с учёбой",
-    "✍️ Работает с текстами",
-    "🎨 Создаёт и изменяет изображения",
+    "📸 Объясняет товары, фото документов и скриншоты",
+    "🎙 Понимает голосовые вопросы",
+    "🎓 Решает задачи по шагам",
+    "✍️ Пишет, проверяет и переводит тексты",
+    "🎨 Создаёт картинки и изменяет фотографии",
     "",
-    "Канал: @PoymiAI_news",
+    `Первые ${config.FREE_REQUEST_LIMIT} запросов бесплатно.`,
+    "Примеры работы и обновления: @PoymiAI_news",
   ].join("\n"),
 ));
 const appServer = createAppServer(config, database, ai, analytics, bot.botInfo.username);

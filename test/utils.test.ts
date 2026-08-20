@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildGenerationPrompt, buildRefinementPrompt, VISION_SYSTEM_PROMPT } from "../src/prompts.js";
-import { cleanTelegramText, splitLongMessage } from "../src/utils.js";
+import { cleanTelegramText, escapeTelegramHtml, splitLongMessage } from "../src/utils.js";
 
 test("splitLongMessage keeps every chunk under Telegram limit", () => {
   const text = Array.from({ length: 500 }, (_, index) => `Абзац ${index}: полезный ответ пользователю.`).join("\n");
@@ -40,6 +40,10 @@ test("cleanTelegramText removes visible markdown decoration", () => {
     cleanTelegramText("📷 **Что на фото**\nЭто __товар__ с `этикеткой`."),
     "📷 Что на фото\nЭто товар с этикеткой.",
   );
+});
+
+test("escapeTelegramHtml keeps profile text safe for formatted messages", () => {
+  assert.equal(escapeTelegramHtml("Max <admin> & co"), "Max &lt;admin&gt; &amp; co");
 });
 
 test("Telegram text replaces broken Unicode surrogate characters", () => {

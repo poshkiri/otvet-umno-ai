@@ -12,7 +12,7 @@ import {
 test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
     [
-      { text: "Личный кабинет", callback_data: "menu:profile" },
+      { text: "Мой аккаунт", callback_data: "menu:profile" },
       { text: "Тарифы", callback_data: "menu:tariffs" },
     ],
     [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
@@ -31,7 +31,7 @@ test("credit packs stay on a separate screen", () => {
     [{ text: "50 запросов · 149 ⭐", callback_data: "buy:start" }],
     [{ text: "200 запросов · 549 ⭐", callback_data: "buy:plus" }],
     [{ text: "500 запросов · 1299 ⭐", callback_data: "buy:pro" }],
-    [{ text: "← Назад", callback_data: "menu:paywall" }],
+    [{ text: "← К тарифам", callback_data: "menu:tariffs" }],
   ]);
 });
 

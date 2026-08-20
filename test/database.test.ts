@@ -249,6 +249,18 @@ test("Plus request allowance is monthly, atomic and restores failed requests", (
   assert.ok(db.reserveRequest(id, 2_592_000, now + 1));
   assert.equal(db.reserveRequest(id, 2_592_000, now + 2), undefined);
   assert.equal(db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now + 2).remaining, 0);
+
+  db.recordSubscriptionPayment(
+    id,
+    299,
+    "subscription-v1:plus:5050",
+    "sub-5050-renewal",
+    now + 5_184_000,
+  );
+  assert.equal(
+    db.getSubscriptionRequestAllowance(id, 2, 2_592_000, now + 2_592_000).remaining,
+    2,
+  );
   db.close();
 });
 

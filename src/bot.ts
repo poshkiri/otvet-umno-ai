@@ -39,7 +39,7 @@ import {
   type ImageAllowance,
   type RefinementId,
 } from "./types.js";
-import { cleanTelegramText, displayName, splitLongMessage } from "./utils.js";
+import { cleanTelegramText, displayName, escapeTelegramHtml, splitLongMessage } from "./utils.js";
 import { Semaphore } from "./semaphore.js";
 import { ProductAnalytics, type AnalyticsProperties } from "./analytics.js";
 import {
@@ -221,21 +221,14 @@ export function createBot(
       });
       await ctx.reply(
         [
-          "Plus активирован ✅",
+          "<b>Plus активирован ✅</b>",
           "",
-          `Доступно ${config.PLUS_REQUEST_LIMIT} AI-баллов и до ${config.PLUS_IMAGE_LIMIT} картинок на 30 дней.`,
+          `Доступно <b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b> на 30 дней.`,
           `Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
           "",
-          "Теперь можно:",
-          "• задавать любые вопросы текстом или голосом;",
-          "• отправлять фото, скриншоты и документы на разбор;",
-          "• решать учебные задачи и разбираться в сложных темах;",
-          "• писать, проверять и переводить тексты;",
-          "• создавать картинки и изменять свои фотографии.",
-          "",
-          "Просто отправь сообщение, голосовое или файл — бот сам поймёт задачу.",
+          "Отправь фото, голос, вопрос или описание картинки — можно начинать.",
         ].join("\n"),
-        { reply_markup: mainMenu() },
+        { parse_mode: "HTML" },
       );
       if (config.ADMIN_TELEGRAM_ID) {
         void ctx.api.sendMessage(
@@ -284,23 +277,17 @@ export function createBot(
     const access = db.getAccess(ctx.from.id);
     await ctx.reply(
       [
-        "Оплата прошла ✅",
+        "<b>Оплата прошла ✅</b>",
         "",
-        `Начислено: ${selected.credits} запросов`,
-        `Доступно: ${access.credits} купленных запросов`,
+        `Начислено: <b>${selected.credits} запросов</b>`,
+        `Теперь доступно: <b>${access.credits}</b>`,
         "",
-        "Что можно сделать:",
-        "• написать вопрос на любую тему;",
-        "• отправить фото, скриншот или документ;",
-        "• записать голосовой вопрос;",
-        "• решить задачу по математике или другому предмету;",
-        "• попросить написать, проверить или перевести текст;",
-        "• получить понятное объяснение сложной темы.",
+        "Они подходят для вопросов, голоса и разбора фото.",
+        "Создание и изменение картинок доступно по Plus.",
         "",
-        "Просто отправь сообщение — бот сам выберет подходящий режим.",
-        "Для создания и изменения картинок действует отдельный лимит: одна пробная картинка, затем Plus.",
+        "Отправь следующую задачу — можно начинать.",
       ].join("\n"),
-      { reply_markup: mainMenu() },
+      { parse_mode: "HTML" },
     );
     if (config.ADMIN_TELEGRAM_ID) {
       void ctx.api.sendMessage(
@@ -349,19 +336,28 @@ export function createBot(
     db.recordAcquisition(ctx.from.id, source);
     track(ctx.from.id, "bot_started", source, { source });
     ctx.session = { awaitingInput: false };
+    const access = db.getAccess(ctx.from.id);
+    const freeRemaining = Math.max(0, access.freeLimit - access.freeUsed);
+    const accessLine = access.plan === "pro"
+      ? "У тебя <b>безлимитный доступ</b>."
+      : freeRemaining > 0
+        ? `Доступно <b>${freeRemaining} бесплатных запросов</b>.`
+        : access.credits > 0
+          ? `Доступно <b>${access.credits} купленных запросов</b>.`
+          : "Бесплатные запросы закончились — продолжение доступно в разделе «Тарифы».";
     await ctx.replyWithPhoto(new InputFile("./assets/welcome-cover.png"), {
       caption: [
-        `Привет, ${displayName(ctx.from?.first_name)}!`,
+        `Привет, ${escapeTelegramHtml(displayName(ctx.from?.first_name))} 👋`,
         "",
-        "Я универсальный AI-помощник. Просто напиши или отправь файл — я сам пойму задачу.",
+        "<b>Не понимаешь, что перед тобой?</b>",
         "",
-        "Могу объяснить тему, ответить на вопрос, решить задачу, помочь с текстом или переводом.",
-        "Понимаю фотографии, скриншоты, документы и голосовые сообщения.",
-        "Создаю картинки и могу изменить присланную фотографию.",
+        "Отправь фото товара, этикетки, ошибки или задачи — я объясню простыми словами.",
         "",
-        "Напиши вопрос или нажми значок камеры, микрофона или скрепки.",
-        `На старте доступно ${config.FREE_REQUEST_LIMIT} бесплатных запросов.`,
+        "Также можно написать вопрос или записать голосовое.",
+        "",
+        `<b>Отправь фото прямо сейчас.</b> ${accessLine}`,
       ].join("\n"),
+      parse_mode: "HTML",
       reply_markup: mainMenu(),
     });
     if (source === "miniapp_plus") {
@@ -374,8 +370,13 @@ export function createBot(
   bot.command("menu", async (ctx) => {
     ctx.session.awaitingInput = false;
     await ctx.reply(
-      "Напиши вопрос или отправь фото, документ либо голосовое. Чтобы создать картинку, просто напиши: «Нарисуй…»",
-      { reply_markup: mainMenu() },
+      [
+        "<b>Что разберём?</b>",
+        "",
+        "Отправь фото, фото документа, голосовое или обычный вопрос.",
+        "Для новой картинки напиши: «Нарисуй…»",
+      ].join("\n"),
+      { parse_mode: "HTML", reply_markup: mainMenu() },
     );
   });
 
@@ -405,16 +406,17 @@ export function createBot(
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
-        "Как пользоваться Пойми AI",
+        "<b>Что можно поручить Пойми AI</b>",
         "",
-        "Можно просто написать вопрос или отправить голосовое.",
-        "Фото и скриншоты бот распознает и объяснит.",
-        "Документы, инструкции и учебные задачи разберёт простыми словами.",
-        "С текстами поможет написать, проверить, сократить или перевести.",
-        "Для картинки напиши, например: «Нарисуй уютное кафе у озера».",
-        "Для изменения фото сначала отправь его, затем напиши, что изменить.",
+        "📸 <b>Фото:</b> «Что это?», «Как использовать?», «Что написано на этикетке?»",
+        "🎓 <b>Учёба:</b> «Реши по шагам», «Объясни как новичку», «Проверь ответ»",
+        "✍️ <b>Текст:</b> «Напиши вежливее», «Сократи», «Переведи», «Исправь ошибки»",
+        "🎙 <b>Голос:</b> задай вопрос как человеку — я распознаю и отвечу",
+        "🎨 <b>Картинки:</b> «Нарисуй уютное кафе у озера» или отправь фото и напиши, что изменить",
+        "",
+        "<b>Ничего выбирать не нужно.</b> Просто отправь задачу удобным способом.",
       ].join("\n"),
-      { reply_markup: mainMenu() },
+      { parse_mode: "HTML", reply_markup: mainMenu() },
     );
   });
 
@@ -524,8 +526,14 @@ export function createBot(
     await ctx.answerCallbackQuery();
     await editOrReplyMenu(
       ctx,
-      "Напиши вопрос, отправь фото, документ или голосовое. Чтобы создать картинку, нажми кнопку ниже.",
+      [
+        "<b>Что разберём?</b>",
+        "",
+        "Отправь фото, фото документа, голосовое или обычный вопрос.",
+        "Для новой картинки напиши: «Нарисуй…»",
+      ].join("\n"),
       mainMenu(),
+      "HTML",
     );
   });
 
@@ -541,22 +549,22 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "⭐ Тариф Plus",
+        "<b>⭐ Plus — ответы и создание картинок</b>",
         "",
         subscription.active
-          ? `Активен до ${formatUnixDate(subscription.periodEnd!)}`
-          : `${config.PLUS_SUBSCRIPTION_STARS} ⭐ на 30 дней`,
-        `Включено: ${config.PLUS_REQUEST_LIMIT} AI-баллов и до ${config.PLUS_IMAGE_LIMIT} картинок.`,
+          ? `Активен до <b>${formatUnixDate(subscription.periodEnd!)}</b>`
+          : `<b>${config.PLUS_SUBSCRIPTION_STARS} Stars</b> на 30 дней`,
+        `Включено: <b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>.`,
         ...(subscriptionRequests.active
-          ? [`Осталось: ${subscriptionRequests.remaining} из ${subscriptionRequests.limit} AI-баллов.`]
+          ? [`Осталось: <b>${subscriptionRequests.remaining}</b> из ${subscriptionRequests.limit} AI-баллов.`]
           : []),
         "",
-        "Как списываются баллы:",
-        "Вопрос, разбор фото или голос — 1",
-        "Создание картинки — 2",
-        "Изменение фотографии — 3",
+        "<b>Списание:</b>",
+        "Вопрос, фото или голос — 1 балл",
+        "Новая картинка — 2 балла",
+        "Изменение фотографии — 3 балла",
         "",
-        "Дополнительные запросы без срока действия:",
+        "<b>Разовые пакеты:</b> только вопросы, голос и разбор фото. Не сгорают.",
         `${CREDIT_PACKAGES.start.credits} запросов — ${CREDIT_PACKAGES.start.stars} ⭐`,
         `${CREDIT_PACKAGES.plus.credits} запросов — ${CREDIT_PACKAGES.plus.stars} ⭐`,
         `${CREDIT_PACKAGES.pro.credits} запросов — ${CREDIT_PACKAGES.pro.stars} ⭐`,
@@ -569,6 +577,7 @@ export function createBot(
       subscription.active
         ? subscriptionMenu(subscription.autoRenew)
         : tariffsMenu(),
+      "HTML",
     );
   });
 
@@ -577,18 +586,20 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "📦 Дополнительные запросы",
+        "<b>📦 Разовые запросы</b>",
         "",
-        "Выбери подходящий пакет. Купленные запросы не сгорают.",
+        "Для вопросов, голоса и разбора фото. Подписка не нужна, запросы не сгорают.",
+        "Создание и изменение картинок доступно по Plus.",
       ].join("\n"),
       creditPacksMenu(),
+      "HTML",
     );
   });
 
   bot.callbackQuery("menu:paywall", async (ctx) => {
     await ctx.answerCallbackQuery();
     await clearCallbackKeyboard(ctx);
-    await replyPaywall(ctx);
+    await replyPaywall(ctx, config.PLUS_SUBSCRIPTION_STARS);
   });
 
   bot.callbackQuery("subscribe:plus", async (ctx) => {
@@ -607,7 +618,7 @@ export function createBot(
     });
     await ctx.reply(
       `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
-      { reply_markup: new InlineKeyboard().url("Открыть оплату", invoiceUrl) },
+      { reply_markup: new InlineKeyboard().url(`Оплатить ${config.PLUS_SUBSCRIPTION_STARS} ⭐`, invoiceUrl) },
     );
   });
 
@@ -624,7 +635,7 @@ export function createBot(
         "2. Нажми кнопку «Открыть @PremiumBot» ниже.",
         "3. Выбери Telegram Stars и нужное количество.",
         "4. После оплаты вернись в Пойми AI.",
-        "5. Открой «Plus и запросы» и нажми «Оформить Plus».",
+        "5. Открой «Тарифы» и выбери «Plus» или разовый пакет.",
         "",
         "Используй только официальный бот Telegram — @PremiumBot.",
       ].join("\n"),
@@ -702,14 +713,15 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "👤 Мой кабинет",
+        "<b>👤 Твой аккаунт</b>",
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
         "",
-        "Здесь находятся лимиты, подписка, история и покупки.",
+        "Здесь можно проверить остаток запросов, покупки и подписку.",
       ].join("\n"),
       profileMenu(),
+      "HTML",
     );
   });
 
@@ -846,7 +858,7 @@ export function createBot(
     if (!reservation) {
       track(ctx.from.id, "paywall_shown", "refinement");
       await ctx.answerCallbackQuery("Лимит закончился");
-      await replyPaywall(ctx);
+      await replyPaywall(ctx, config.PLUS_SUBSCRIPTION_STARS);
       return;
     }
     await ctx.answerCallbackQuery("Переделываю…");
@@ -908,7 +920,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     await ctx.answerCallbackQuery("Отменено");
-    await ctx.editMessageText("Напиши вопрос, отправь фото, документ или голосовое.", {
+    await ctx.editMessageText("Напиши вопрос, отправь фото, фото документа или голосовое.", {
       reply_markup: mainMenu(),
     });
   });
@@ -981,10 +993,12 @@ export function createBot(
     pendingAlbums.set(key, album);
   });
 
-  bot.on("message:document", async (ctx, next) => {
+  bot.on("message:document", async (ctx) => {
     const mimeType = ctx.message.document.mime_type;
     if (!mimeType?.startsWith("image/")) {
-      await next();
+      await ctx.reply(
+        "Пока я понимаю документ только как фотографию. Отправь нужную страницу фото или скриншотом.",
+      );
       return;
     }
     if ((ctx.message.document.file_size ?? 0) > MAX_IMAGE_BYTES) {
@@ -1022,7 +1036,7 @@ export function createBot(
       });
       const editPrompt = extractImageEditPrompt(transcript);
       if (editPrompt && ctx.session.visualSources?.length) {
-        db.commitRequest(reservation);
+        db.releaseRequest(reservation);
         await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
         await editImageForUser(
           ctx, config, db, ai, ctx.session.visualSources, editPrompt,
@@ -1386,7 +1400,7 @@ async function continueVisualConversation(
 }
 
 async function replyResult(ctx: BotContext, result: string): Promise<void> {
-  const chunks = splitLongMessage(result);
+  const chunks = splitLongMessage(cleanTelegramText(result));
   for (const chunk of chunks) await ctx.reply(chunk);
 }
 
@@ -1429,10 +1443,10 @@ async function downloadTelegramFile(
 
 async function handleError(ctx: BotContext, error: unknown): Promise<void> {
   console.error("Generation error", error);
-  const message = error instanceof Error && error.message.includes("429")
-    ? "AI временно перегружен или закончился баланс API. Попробуй чуть позже."
-    : "Не получилось обработать запрос. Проверь ключ API и попробуй ещё раз.";
-  await ctx.reply(message, { reply_markup: mainMenu() });
+  await ctx.reply(
+    "Сервис временно недоступен. Запрос не списан — попробуй ещё раз чуть позже или напиши в поддержку.",
+    { reply_markup: new InlineKeyboard().url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL) },
+  );
 }
 
 function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
@@ -1452,9 +1466,13 @@ async function editOrReplyMenu(
   ctx: BotContext,
   text: string,
   keyboard: InlineKeyboard,
+  parseMode?: "HTML",
 ): Promise<void> {
   await clearCallbackKeyboard(ctx);
-  await ctx.reply(text, { reply_markup: keyboard });
+  await ctx.reply(text, {
+    ...(parseMode ? { parse_mode: parseMode } : {}),
+    reply_markup: keyboard,
+  });
 }
 
 async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
@@ -1466,17 +1484,20 @@ async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
   }
 }
 
-async function replyPaywall(ctx: BotContext): Promise<void> {
+async function replyPaywall(
+  ctx: BotContext,
+  plusStars = Number(process.env.PLUS_SUBSCRIPTION_STARS ?? 299),
+): Promise<void> {
   await ctx.reply(
     [
-      "Бесплатные запросы закончились",
+      "<b>Бесплатные запросы закончились</b>",
       "",
-      "Хочешь продолжить пользоваться Пойми AI?",
+      "Выбери удобный способ продолжить:",
       "",
-      "⭐ Plus — доступ на 30 дней",
-      "📦 Разовые запросы — не сгорают",
+      `⭐ <b>Plus · ${plusStars} Stars</b> — ответы и картинки на 30 дней`,
+      `📦 <b>${CREDIT_PACKAGES.start.credits} запросов · ${CREDIT_PACKAGES.start.stars} Stars</b> — без подписки, не сгорают`,
     ].join("\n"),
-    { reply_markup: paywallMenu() },
+    { parse_mode: "HTML", reply_markup: paywallMenu() },
   );
 }
 
