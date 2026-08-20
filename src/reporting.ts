@@ -30,6 +30,7 @@ export function formatBusinessReport(stats: BusinessStats, starBalance?: number)
     `Фото и скриншоты: ${stats.photoRequests}`,
     `Текст: ${stats.textRequests}`,
     `Голосовые: ${stats.voiceRequests}`,
+    `PDF-документы: ${stats.documentRequests}`,
     `Создано картинок: ${stats.createdImages}`,
     "",
     "⭐ Продажи",

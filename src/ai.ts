@@ -2,6 +2,7 @@ import OpenAI, { toFile } from "openai";
 import {
   buildGenerationPrompt,
   buildRefinementPrompt,
+  DOCUMENT_SYSTEM_PROMPT,
   GENERAL_ASSISTANT_PROMPT,
   SYSTEM_PROMPT,
   VISION_FOLLOW_UP_PROMPT,
@@ -118,6 +119,36 @@ export class AiService {
         model: this.model,
         instructions: GENERAL_ASSISTANT_PROMPT,
         input: question.trim(),
+        max_output_tokens: this.maxOutputTokens,
+      });
+      return this.requireText(response.output_text);
+    });
+  }
+
+  async analyzePdf(
+    document: Uint8Array,
+    filename: string,
+    question?: string,
+  ): Promise<string> {
+    const prompt = question?.trim()
+      ? `Ответь на вопрос по этому PDF: ${question.trim()}`
+      : "Объясни этот PDF простыми словами и выдели самое важное.";
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: DOCUMENT_SYSTEM_PROMPT,
+        input: [{
+          role: "user",
+          content: [
+            {
+              type: "input_file",
+              file_data: Buffer.from(document).toString("base64"),
+              filename,
+              detail: "low",
+            },
+            { type: "input_text", text: prompt },
+          ],
+        }],
         max_output_tokens: this.maxOutputTokens,
       });
       return this.requireText(response.output_text);

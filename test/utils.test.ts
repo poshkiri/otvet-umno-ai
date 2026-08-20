@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGenerationPrompt, buildRefinementPrompt, VISION_SYSTEM_PROMPT } from "../src/prompts.js";
+import {
+  buildGenerationPrompt,
+  buildRefinementPrompt,
+  DOCUMENT_SYSTEM_PROMPT,
+  VISION_SYSTEM_PROMPT,
+} from "../src/prompts.js";
 import { cleanTelegramText, escapeTelegramHtml, splitLongMessage } from "../src/utils.js";
 
 test("splitLongMessage keeps every chunk under Telegram limit", () => {
@@ -33,6 +38,12 @@ test("vision prompt covers products, screenshots and uncertainty", () => {
   assert.match(VISION_SYSTEM_PROMPT, /не называй все ёмкости одним словом «флаконы»/);
   assert.match(VISION_SYSTEM_PROMPT, /очищающее средство, тонер или лосьон, сыворотка или эссенция/);
   assert.match(VISION_SYSTEM_PROMPT, /Если важных предупреждений нет, пропусти этот раздел/);
+});
+
+test("document prompt prioritizes useful PDF facts and privacy", () => {
+  assert.match(DOCUMENT_SYSTEM_PROMPT, /важные даты, суммы, условия/);
+  assert.match(DOCUMENT_SYSTEM_PROMPT, /персональные данные/);
+  assert.match(DOCUMENT_SYSTEM_PROMPT, /Не выдумывай/);
 });
 
 test("cleanTelegramText removes visible markdown decoration", () => {

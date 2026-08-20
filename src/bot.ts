@@ -59,6 +59,7 @@ interface VisualMessageItem {
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_PDF_BYTES = 8 * 1024 * 1024;
 const MAX_VOICE_BYTES = 10 * 1024 * 1024;
 const MAX_ALBUM_IMAGES = 6;
 const MAX_ALBUM_BYTES = 16 * 1024 * 1024;
@@ -130,6 +131,24 @@ export function createBot(
   ): void => {
     db.recordEvent(telegramId, event, detail);
     analytics.capture(telegramId, event, properties);
+    if (
+      [
+        "generation_text",
+        "generation_photo",
+        "generation_voice",
+        "generation_document",
+        "image_created",
+        "image_edited",
+      ]
+        .includes(event)
+      && db.claimAction(telegramId, "analytics-first-result", 100 * 365 * 24 * 60 * 60)
+    ) {
+      db.recordEvent(telegramId, "first_result", event);
+      analytics.capture(telegramId, "first_result", {
+        result_type: event,
+        ...properties,
+      });
+    }
   };
 
   const notifyAdminError = async (label: string, error: unknown): Promise<void> => {
@@ -995,9 +1014,17 @@ export function createBot(
 
   bot.on("message:document", async (ctx) => {
     const mimeType = ctx.message.document.mime_type;
+    if (mimeType === "application/pdf") {
+      if ((ctx.message.document.file_size ?? 0) > MAX_PDF_BYTES) {
+        await ctx.reply("PDF слишком большой. Максимальный размер — 8 МБ.");
+        return;
+      }
+      await processPdfDocument(ctx, config, db, ai, resourceLimiter, track);
+      return;
+    }
     if (!mimeType?.startsWith("image/")) {
       await ctx.reply(
-        "Пока я понимаю документ только как фотографию. Отправь нужную страницу фото или скриншотом.",
+        "Сейчас я разбираю PDF, фотографии и скриншоты. Другой документ сохрани как PDF или отправь нужную страницу фотографией.",
       );
       return;
     }
@@ -1054,9 +1081,9 @@ export function createBot(
       ctx.session.flow = "analyze";
       ctx.session.category = "auto";
       finishGeneration(ctx, db, transcript, result, reservation);
-      track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
+      track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
       await notifyLastFreeRequest(ctx, db);
     } catch (error) {
       db.releaseRequest(reservation);
@@ -1130,12 +1157,12 @@ async function generateForUser(
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
     const result = await ai.generate(ctx.session.flow!, ctx.session.category!, source);
     finishGeneration(ctx, db, source, result, reservation);
+    await replyResult(ctx, result);
     track(ctx.from!.id, "generation_text", ctx.session.flow, {
       input_type: "text",
       flow: ctx.session.flow,
       category: ctx.session.category,
     });
-    await replyResult(ctx, result);
     await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -1159,8 +1186,49 @@ async function answerGeneralForUser(
     ctx.session.flow = "analyze";
     ctx.session.category = "auto";
     finishGeneration(ctx, db, source, result, reservation);
-    track(ctx.from!.id, `generation_${inputType}`, "general", { input_type: inputType });
     await replyResult(ctx, result);
+    track(ctx.from!.id, `generation_${inputType}`, "general", { input_type: inputType });
+    await notifyLastFreeRequest(ctx, db);
+  } catch (error) {
+    db.releaseRequest(reservation);
+    await handleError(ctx, error);
+  }
+}
+
+async function processPdfDocument(
+  ctx: BotContext,
+  config: AppConfig,
+  db: BotDatabase,
+  ai: AiService,
+  resourceLimiter: Semaphore,
+  track: TrackEvent,
+): Promise<void> {
+  const document = ctx.message?.document;
+  if (!document) return;
+  const reservation = await reserveForUser(ctx, db, track);
+  if (!reservation) return;
+  try {
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+    const filename = document.file_name?.trim() || "document.pdf";
+    const result = await resourceLimiter.run(async () => {
+      const data = await downloadTelegramFile(
+        ctx,
+        config.BOT_TOKEN,
+        document.file_id,
+        MAX_PDF_BYTES,
+      );
+      return ai.analyzePdf(data, filename, ctx.message?.caption);
+    });
+    const cleanResult = cleanTelegramText(result);
+    ctx.session.flow = "analyze";
+    ctx.session.category = "auto";
+    const source = ctx.message?.caption?.trim()
+      ? `PDF «${filename}». Вопрос: ${ctx.message.caption.trim()}`
+      : `PDF «${filename}»`;
+    finishGeneration(ctx, db, source, cleanResult, reservation);
+    delete ctx.session.visualSources;
+    await replyResult(ctx, cleanResult);
+    track(ctx.from!.id, "generation_document", "pdf", { input_type: "pdf" });
     await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -1200,12 +1268,12 @@ async function generateImageForUser(
     const image = await ai.generateImage(prompt, ctx.from!.id);
     db.completeImageGeneration(reservation.id);
     if (aiReservation) db.commitRequest(aiReservation.id);
-    track(ctx.from!.id, "image_created", reservation.allowance.tier, {
-      tier: reservation.allowance.tier,
-    });
     const sent = await ctx.replyWithPhoto(new InputFile(image, "otvet-umno.png"), {
       caption: `Готово 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
       reply_markup: imageResultMenu(),
+    });
+    track(ctx.from!.id, "image_created", reservation.allowance.tier, {
+      tier: reservation.allowance.tier,
     });
     const photo = sent.photo.at(-1);
     if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
@@ -1257,13 +1325,13 @@ async function editImageForUser(
     });
     db.completeImageGeneration(reservation.id);
     if (aiReservation) db.commitRequest(aiReservation.id);
-    track(ctx.from!.id, "image_edited", reservation.allowance.tier, {
-      tier: reservation.allowance.tier,
-      source_count: sources.length,
-    });
     const sent = await ctx.replyWithPhoto(new InputFile(output, "otvet-umno-edit.png"), {
       caption: `Готово, изменил исходное фото 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
       reply_markup: imageEditResultMenu(),
+    });
+    track(ctx.from!.id, "image_edited", reservation.allowance.tier, {
+      tier: reservation.allowance.tier,
+      source_count: sources.length,
     });
     const photo = sent.photo.at(-1);
     if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
@@ -1352,16 +1420,16 @@ async function processVisualItems(
       : "Фотография или скриншот пользователя");
     finishGeneration(ctx, db, source, cleanResult, reservation);
     const inputType = items.length > 1 ? "album" : "photo";
-    track(ctx.from!.id, "generation_photo", inputType, {
-      input_type: inputType,
-      image_count: items.length,
-    });
     ctx.session.visualResponseId = visual.responseId;
     ctx.session.visualSources = items.map((item) => ({
       fileId: item.fileId,
       mimeType: item.mimeType,
     }));
     await replyVisualResult(ctx, cleanResult);
+    track(ctx.from!.id, "generation_photo", inputType, {
+      input_type: inputType,
+      image_count: items.length,
+    });
     await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);
@@ -1388,10 +1456,10 @@ async function continueVisualConversation(
     ctx.session.lastSource = question;
     ctx.session.lastResult = cleanResult;
     ctx.session.visualResponseId = visual.responseId;
+    await replyVisualResult(ctx, cleanResult);
     track(ctx.from!.id, "generation_text", "visual_followup", {
       input_type: "visual_followup",
     });
-    await replyVisualResult(ctx, cleanResult);
     await notifyLastFreeRequest(ctx, db);
   } catch (error) {
     db.releaseRequest(reservation);

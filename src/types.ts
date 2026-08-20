@@ -89,6 +89,7 @@ export interface BusinessStats {
   photoRequests: number;
   textRequests: number;
   voiceRequests: number;
+  documentRequests: number;
   createdImages: number;
   activeSubscriptions: number;
   purchases: number;

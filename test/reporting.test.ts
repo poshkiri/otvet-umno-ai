@@ -12,6 +12,7 @@ test("business report exposes the key product and payment metrics", () => {
     photoRequests: 50,
     textRequests: 30,
     voiceRequests: 10,
+    documentRequests: 4,
     createdImages: 6,
     activeSubscriptions: 2,
     purchases: 4,
@@ -24,6 +25,7 @@ test("business report exposes the key product and payment metrics", () => {
   }, 550);
 
   assert.match(report, /Активных: 40/);
+  assert.match(report, /PDF-документы: 4/);
   assert.match(report, /Конверсия активных в оплату: 7,5%/);
   assert.match(report, /Чистыми: 597 Stars/);
   assert.match(report, /Популярный пакет: 200 запросов/);

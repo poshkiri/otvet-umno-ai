@@ -160,6 +160,7 @@ test("business analytics counts activity, revenue, refunds and conversion", () =
   db.recordEvent(3001, "generation_photo", "photo");
   db.recordEvent(3001, "generation_text", "visual_followup");
   db.recordEvent(3002, "generation_voice", "voice");
+  db.recordEvent(3002, "generation_document", "pdf");
   db.saveGeneration(3001, "analyze", "auto", "Фото", "Ответ");
   db.saveGeneration(3002, "analyze", "auto", "Голос", "Ответ");
   db.recordPayment(3001, "start", 50, 99, "payload-1", "analytics-charge-1");
@@ -173,6 +174,7 @@ test("business analytics counts activity, revenue, refunds and conversion", () =
   assert.equal(stats.photoRequests, 1);
   assert.equal(stats.textRequests, 1);
   assert.equal(stats.voiceRequests, 1);
+  assert.equal(stats.documentRequests, 1);
   assert.equal(stats.purchases, 2);
   assert.equal(stats.payingUsers, 2);
   assert.equal(stats.grossStars, 398);

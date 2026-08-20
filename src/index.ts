@@ -55,6 +55,7 @@ const configureProfile = async (label: string, update: () => Promise<unknown>): 
     console.warn(`Не удалось обновить ${label}; бот продолжит работу`, error);
   }
 };
+await configureProfile("имя", () => bot.api.setMyName("Пойми AI | Фото и задачи"));
 await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "balance", description: "Мои запросы и лимиты" },
