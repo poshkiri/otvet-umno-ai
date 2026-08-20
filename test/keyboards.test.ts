@@ -15,7 +15,7 @@ test("main menu keeps the primary actions simple", () => {
       { text: "Личный кабинет", callback_data: "menu:profile" },
       { text: "Тарифы", callback_data: "menu:tariffs" },
     ],
-    [{ text: "Поддержка", callback_data: "support:start" }],
+    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
   ]);
 });
 
@@ -26,7 +26,7 @@ test("main menu promotes the Mini App with one primary button", () => {
       { text: "Личный кабинет", callback_data: "menu:profile" },
       { text: "Тарифы", callback_data: "menu:tariffs" },
     ],
-    [{ text: "Поддержка", callback_data: "support:start" }],
+    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
   ]);
 });
 
@@ -56,7 +56,7 @@ test("profile groups limits, purchases and personal content", () => {
       { text: "История", callback_data: "menu:history" },
       { text: "Покупки", callback_data: "menu:payments" },
     ],
-    [{ text: "Поддержка", callback_data: "support:start" }],
+    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
     [{ text: "Назад", callback_data: "menu:main" }],
   ]);
 });
@@ -73,7 +73,7 @@ test("tariffs return to the account menu", () => {
     { text: "Мои покупки", callback_data: "menu:payments" },
   ]);
   assert.deepEqual(tariffsMenu().inline_keyboard[3], [
-    { text: "Поддержка", callback_data: "support:start" },
+    { text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" },
   ]);
 });
 

@@ -2,13 +2,15 @@ import { InlineKeyboard } from "grammy";
 import type { CategoryId, FlowId } from "./types.js";
 import { CREDIT_PACKAGES } from "./payments.js";
 
+export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
+
 export function mainMenu(miniAppUrl = process.env.MINI_APP_URL): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   if (miniAppUrl?.trim()) keyboard.webApp("Открыть Mini App", miniAppUrl.trim()).row();
   return keyboard
     .text("Личный кабинет", "menu:profile")
     .text("Тарифы", "menu:tariffs").row()
-    .text("Поддержка", "support:start");
+    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL);
 }
 
 export function paywallMenu(): InlineKeyboard {
@@ -77,7 +79,7 @@ export function profileMenu(): InlineKeyboard {
     .text("Тарифы", "menu:tariffs").row()
     .text("История", "menu:history")
     .text("Покупки", "menu:payments").row()
-    .text("Поддержка", "support:start").row()
+    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL).row()
     .text("Назад", "menu:main");
 }
 
@@ -87,7 +89,7 @@ export function tariffsMenu(): InlineKeyboard {
     .text("Разовые пакеты", "menu:credit-packs").row()
     .text("Как купить Stars", "stars:help")
     .text("Мои покупки", "menu:payments").row()
-    .text("Поддержка", "support:start").row()
+    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL).row()
     .text("Назад", "menu:profile");
 }
 

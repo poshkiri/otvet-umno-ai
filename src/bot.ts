@@ -14,6 +14,7 @@ import {
   quickCategory,
   refinementsMenu,
   resultMenu,
+  SUPPORT_TELEGRAM_URL,
   visualResultMenu,
   tariffsMenu,
 } from "./keyboards.js";
@@ -101,31 +102,6 @@ function isCategoryId(value: string): value is CategoryId {
 
 function isRefinementId(value: string): value is RefinementId {
   return (refinementIds as readonly string[]).includes(value);
-}
-
-async function openSupportRequest(ctx: BotContext, config: AppConfig): Promise<void> {
-  if (!config.ADMIN_TELEGRAM_ID) {
-    await ctx.reply("Поддержка временно недоступна. Попробуй немного позже.");
-    return;
-  }
-  ctx.session.awaitingSupport = true;
-  ctx.session.awaitingInput = false;
-  ctx.session.awaitingImagePrompt = false;
-  ctx.session.awaitingImageEdit = false;
-  await ctx.reply(
-    [
-      "Поддержка Пойми AI",
-      "",
-      "Обратиться может любой пользователь, подписка не нужна.",
-      "",
-      "Опиши проблему одним сообщением. Можно приложить скриншот, документ или голосовое. Если вопрос об оплате, укажи ID платежа из раздела «Мои покупки».",
-      "",
-      "Ответ придёт прямо сюда, в этот чат.",
-    ].join("\n"),
-    {
-      reply_markup: new InlineKeyboard().text("Отмена", "support:cancel"),
-    },
-  );
 }
 
 export function createBot(
@@ -393,7 +369,6 @@ export function createBot(
         reply_markup: tariffsMenu(),
       });
     }
-    if (source === "support") await openSupportRequest(ctx, config);
   });
 
   bot.command("menu", async (ctx) => {
@@ -460,32 +435,9 @@ export function createBot(
   });
 
   bot.command("paysupport", async (ctx) => {
-    await openSupportRequest(ctx, config);
-  });
-
-  bot.callbackQuery("support:start", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await clearCallbackKeyboard(ctx);
-    await openSupportRequest(ctx, config);
-  });
-
-  bot.callbackQuery("support:cancel", async (ctx) => {
-    ctx.session.awaitingSupport = false;
-    delete ctx.session.supportReplyTo;
-    await ctx.answerCallbackQuery("Обращение отменено");
-    await ctx.editMessageText("Обращение не отправлено.");
-  });
-
-  bot.callbackQuery(/^support:reply:(\d+)$/, async (ctx) => {
-    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) {
-      await ctx.answerCallbackQuery("Нет доступа");
-      return;
-    }
-    ctx.session.supportReplyTo = Number(ctx.match[1]);
-    await ctx.answerCallbackQuery();
     await ctx.reply(
-      `Напиши ответ пользователю ${ctx.match[1]} одним сообщением.`,
-      { reply_markup: new InlineKeyboard().text("Отмена", "support:cancel") },
+      "Поддержка доступна всем пользователям, подписка не нужна. Нажми кнопку ниже и напиши нам напрямую.",
+      { reply_markup: new InlineKeyboard().url("Открыть @PoymiAI_support", SUPPORT_TELEGRAM_URL) },
     );
   });
 
@@ -969,92 +921,6 @@ export function createBot(
     await ctx.editMessageText("Напиши вопрос, отправь фото, документ или голосовое.", {
       reply_markup: mainMenu(),
     });
-  });
-
-  bot.on("message", async (ctx, next) => {
-    const text = ctx.message.text?.trim();
-    if (text?.startsWith("/")) {
-      await next();
-      return;
-    }
-
-    if (ctx.session.supportReplyTo && ctx.from.id === config.ADMIN_TELEGRAM_ID) {
-      if (!text) {
-        await ctx.reply("Ответ пока можно отправить только текстом.");
-        return;
-      }
-      const recipientId = ctx.session.supportReplyTo;
-      delete ctx.session.supportReplyTo;
-      try {
-        await ctx.api.sendMessage(
-          recipientId,
-          `Ответ поддержки Пойми AI\n\n${text}`,
-          { reply_markup: new InlineKeyboard().text("Написать ещё", "support:start") },
-        );
-        track(recipientId, "support_reply_sent");
-        await ctx.reply(`Ответ отправлен пользователю ${recipientId}.`);
-      } catch (error) {
-        console.error("Support reply failed", error);
-        await ctx.reply("Не удалось отправить ответ. Возможно, пользователь заблокировал бота.");
-      }
-      return;
-    }
-
-    if (!ctx.session.awaitingSupport) {
-      await next();
-      return;
-    }
-    if (!config.ADMIN_TELEGRAM_ID) {
-      ctx.session.awaitingSupport = false;
-      await ctx.reply("Поддержка временно недоступна. Попробуй немного позже.");
-      return;
-    }
-
-    const supported = Boolean(
-      ctx.message.text
-      || ctx.message.photo
-      || ctx.message.document
-      || ctx.message.voice,
-    );
-    if (!supported) {
-      await ctx.reply("Пришли текст, скриншот, документ или голосовое сообщение.");
-      return;
-    }
-
-    ctx.session.awaitingSupport = false;
-    const ticketId = `${ctx.from.id}-${ctx.update.update_id}`;
-    const username = ctx.from.username ? `@${ctx.from.username}` : "не указан";
-    try {
-      await ctx.api.sendMessage(
-        config.ADMIN_TELEGRAM_ID,
-        [
-          `Новое обращение #${ticketId}`,
-          `Пользователь: ${displayName(ctx.from.first_name)}`,
-          `Username: ${username}`,
-          `Telegram ID: ${ctx.from.id}`,
-        ].join("\n"),
-        {
-          reply_markup: new InlineKeyboard().text(
-            "Ответить пользователю",
-            `support:reply:${ctx.from.id}`,
-          ),
-        },
-      );
-      await ctx.api.copyMessage(
-        config.ADMIN_TELEGRAM_ID,
-        ctx.chat.id,
-        ctx.message.message_id,
-      );
-      track(ctx.from.id, "support_ticket_created", ticketId);
-      await ctx.reply(
-        `Обращение #${ticketId} принято. Поддержка ответит прямо в этом чате.`,
-        { reply_markup: mainMenu() },
-      );
-    } catch (error) {
-      console.error("Support ticket failed", error);
-      await notifyAdminError("Не удалось создать обращение", error);
-      await ctx.reply("Не получилось отправить обращение. Попробуй ещё раз немного позже.");
-    }
   });
 
   bot.on("message:text", async (ctx) => {

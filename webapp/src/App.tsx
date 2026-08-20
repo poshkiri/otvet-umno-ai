@@ -216,7 +216,7 @@ const INFO_PAGES: Record<InfoPageId, InfoPageContent> = {
     sections: [
       {
         title: "Как обратиться",
-        paragraphs: ["Откройте бота @OtvetUmnoAI_bot, выберите «Личный кабинет» → «Поддержка» или отправьте команду /paysupport. Опишите проблему или приложите скриншот — ответ придёт прямо в чат с ботом."],
+        paragraphs: ["Напишите напрямую в Telegram: @PoymiAI_support. Поддержка доступна всем пользователям независимо от наличия подписки."],
       },
       {
         title: "Кто может написать",
@@ -714,7 +714,7 @@ function InfoPage({ pageId }: { pageId: InfoPageId }) {
           </section>
         ))}
         {pageId === "support" && (
-          <a className="support-link" href="https://t.me/OtvetUmnoAI_bot?start=support" target="_blank" rel="noreferrer">Написать в поддержку</a>
+          <a className="support-link" href="https://t.me/PoymiAI_support" target="_blank" rel="noreferrer">Написать @PoymiAI_support</a>
         )}
         <footer>Пойми AI · @OtvetUmnoAI_bot</footer>
       </article>
