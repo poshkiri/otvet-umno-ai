@@ -1288,8 +1288,9 @@ async function generateImageForUser(
     });
     return;
   }
+  let stopProgress: (() => Promise<void>) | undefined;
   try {
-    await ctx.api.sendChatAction(ctx.chat!.id, "upload_photo");
+    stopProgress = await startImageProgress(ctx, "Создаю изображение");
     const image = await ai.generateImage(prompt, ctx.from!.id);
     db.completeImageGeneration(reservation.id);
     if (aiReservation) db.commitRequest(aiReservation.id);
@@ -1306,6 +1307,8 @@ async function generateImageForUser(
     db.releaseImageGeneration(reservation.id);
     if (aiReservation) db.releaseRequest(aiReservation.id);
     await handleError(ctx, error);
+  } finally {
+    await stopProgress?.();
   }
 }
 
@@ -1339,8 +1342,9 @@ async function editImageForUser(
     });
     return;
   }
+  let stopProgress: (() => Promise<void>) | undefined;
   try {
-    await ctx.api.sendChatAction(ctx.chat!.id, "upload_photo");
+    stopProgress = await startImageProgress(ctx, "Изменяю исходное фото");
     const output = await resourceLimiter.run(async () => {
       const images = await Promise.all(sources.slice(0, 4).map(async (source) => ({
         data: await downloadTelegramFile(ctx, config.BOT_TOKEN, source.fileId, MAX_IMAGE_BYTES),
@@ -1365,7 +1369,31 @@ async function editImageForUser(
     db.releaseImageGeneration(reservation.id);
     if (aiReservation) db.releaseRequest(aiReservation.id);
     await handleError(ctx, error);
+  } finally {
+    await stopProgress?.();
   }
+}
+
+async function startImageProgress(
+  ctx: BotContext,
+  label: string,
+): Promise<() => Promise<void>> {
+  const chatId = ctx.chat!.id;
+  await ctx.api.sendChatAction(chatId, "upload_photo");
+  const status = await ctx.reply(
+    `⏳ ${label}…\n\nОбычно это занимает 30–90 секунд. Запрос уже принят — повторно отправлять его не нужно.`,
+  );
+  let stopped = false;
+  const activityTimer = setInterval(() => {
+    if (stopped) return;
+    void ctx.api.sendChatAction(chatId, "upload_photo").catch(() => undefined);
+  }, 4_000);
+
+  return async () => {
+    stopped = true;
+    clearInterval(activityTimer);
+    await ctx.api.deleteMessage(chatId, status.message_id).catch(() => undefined);
+  };
 }
 
 function finishGeneration(
