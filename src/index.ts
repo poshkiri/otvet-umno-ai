@@ -41,6 +41,7 @@ const ai = new AiService(
   config.OPENAI_MODEL,
   config.OPENAI_TRANSCRIBE_MODEL,
   config.OPENAI_IMAGE_MODEL,
+  config.OPENAI_IMAGE_EDIT_MODEL,
   config.MAX_OUTPUT_TOKENS,
 );
 const analytics = new ProductAnalytics(config.POSTHOG_API_KEY, config.POSTHOG_HOST, config.BOT_TOKEN);

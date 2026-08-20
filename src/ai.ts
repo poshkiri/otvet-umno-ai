@@ -33,6 +33,7 @@ export class AiService {
     private readonly model: string,
     private readonly transcribeModel: string,
     private readonly imageModel: string,
+    private readonly imageEditModel: string,
     private readonly maxOutputTokens = 1_000,
   ) {
     this.client = new OpenAI({ apiKey, timeout: 45_000, maxRetries: 1 });
@@ -187,11 +188,12 @@ export class AiService {
         { type: image.mimeType },
       )));
       const response = await this.client.images.edit({
-        model: this.imageModel,
+        model: this.imageEditModel,
         image: files,
         prompt: buildImageEditPrompt(prompt),
-        size: "1024x1024",
+        size: "auto",
         quality: "medium",
+        input_fidelity: "high",
         output_format: "png",
         n: 1,
         user: String(telegramId),

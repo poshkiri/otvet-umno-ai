@@ -15,6 +15,7 @@ const schema = z.object({
   OPENAI_MODEL: z.string().default("gpt-5-mini"),
   OPENAI_TRANSCRIBE_MODEL: z.string().default("gpt-4o-mini-transcribe"),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1-mini"),
+  OPENAI_IMAGE_EDIT_MODEL: z.string().default("gpt-image-1.5"),
   FREE_REQUEST_LIMIT: z.coerce.number().int().min(0).default(5),
   DATABASE_PATH: z.string().default("./data/bot.db"),
   ADMIN_TELEGRAM_ID: z.coerce.number().int().positive().optional(),

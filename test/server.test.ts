@@ -33,6 +33,7 @@ function config(): AppConfig {
     OPENAI_MODEL: "test-model",
     OPENAI_TRANSCRIBE_MODEL: "test-transcribe",
     OPENAI_IMAGE_MODEL: "test-image",
+    OPENAI_IMAGE_EDIT_MODEL: "test-image-edit",
     FREE_REQUEST_LIMIT: 5,
     DATABASE_PATH: ":memory:",
     UNLIMITED_TELEGRAM_IDS: [],

@@ -73,6 +73,8 @@ test("image creation and editing include safety rules", () => {
   const edit = buildImageEditPrompt("добавь деньги на стол");
   assert.match(generation, /уютный дом у озера/);
   assert.match(edit, /добавь деньги на стол/);
+  assert.match(edit, /точечное редактирование исходной фотографии/);
+  assert.match(edit, /всё вокруг оставь как на оригинале/);
   assert.match(generation, /Правила безопасности/);
   assert.match(edit, /Правила безопасности/);
 });
