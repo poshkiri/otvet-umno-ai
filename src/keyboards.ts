@@ -4,10 +4,8 @@ import { CREDIT_PACKAGES } from "./payments.js";
 
 export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
 
-export function mainMenu(miniAppUrl = process.env.MINI_APP_URL): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  if (miniAppUrl?.trim()) keyboard.webApp("Открыть Mini App", miniAppUrl.trim()).row();
-  return keyboard
+export function mainMenu(): InlineKeyboard {
+  return new InlineKeyboard()
     .text("Личный кабинет", "menu:profile")
     .text("Тарифы", "menu:tariffs").row()
     .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL);

@@ -57,7 +57,6 @@ const configureProfile = async (label: string, update: () => Promise<unknown>): 
 };
 await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
-  { command: "app", description: "Открыть Mini App" },
   { command: "balance", description: "Проверить лимиты" },
   { command: "paysupport", description: "Поддержка и вопросы по оплате" },
   { command: "help", description: "Как пользоваться" },

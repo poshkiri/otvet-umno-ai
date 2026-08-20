@@ -19,17 +19,6 @@ test("main menu keeps the primary actions simple", () => {
   ]);
 });
 
-test("main menu promotes the Mini App with one primary button", () => {
-  assert.deepEqual(mainMenu("https://example.com/app/").inline_keyboard, [
-    [{ text: "Открыть Mini App", web_app: { url: "https://example.com/app/" } }],
-    [
-      { text: "Личный кабинет", callback_data: "menu:profile" },
-      { text: "Тарифы", callback_data: "menu:tariffs" },
-    ],
-    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
-  ]);
-});
-
 test("paywall offers only subscription or request packs", () => {
   assert.deepEqual(paywallMenu().inline_keyboard, [
     [{ text: "⭐ Подключить Plus", callback_data: "subscribe:plus" }],
