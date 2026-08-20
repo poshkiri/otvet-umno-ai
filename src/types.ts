@@ -43,6 +43,7 @@ export interface BotSession {
   visualResponseId?: string;
   awaitingImagePrompt?: boolean;
   awaitingImageEdit?: boolean;
+  awaitingImageEditSource?: boolean;
   visualSources?: Array<{ fileId: string; mimeType: string }>;
 }
 

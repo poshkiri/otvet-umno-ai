@@ -59,9 +59,9 @@ const configureProfile = async (label: string, update: () => Promise<unknown>): 
 await configureProfile("имя", () => bot.api.setMyName("Пойми AI | Фото и задачи"));
 await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
+  { command: "menu", description: "Открыть главное меню" },
   { command: "balance", description: "Мои запросы и лимиты" },
   { command: "paysupport", description: "Написать в поддержку" },
-  { command: "help", description: "Примеры задач для бота" },
 ]));
 await configureProfile("кнопку меню", () => bot.api.setChatMenuButton({
   menu_button: { type: "commands" },

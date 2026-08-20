@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   creditPacksMenu,
+  imagesMenu,
   mainMenu,
   paywallMenu,
   profileMenu,
@@ -11,12 +12,22 @@ import {
 
 test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
-    [{ text: "✨ Примеры", callback_data: "menu:examples" }],
     [
-      { text: "👤 Аккаунт", callback_data: "menu:profile" },
-      { text: "⭐ Тарифы", callback_data: "menu:tariffs" },
+      { text: "💬 Чат", callback_data: "menu:chat" },
+      { text: "🔍 Разобрать", callback_data: "menu:analyze" },
     ],
-    [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
+    [
+      { text: "🎨 Картинки", callback_data: "menu:images" },
+      { text: "👤 Аккаунт", callback_data: "menu:profile" },
+    ],
+  ]);
+});
+
+test("images menu separates creation from editing", () => {
+  assert.deepEqual(imagesMenu().inline_keyboard, [
+    [{ text: "✨ Создать новую", callback_data: "image:create" }],
+    [{ text: "🪄 Изменить мою", callback_data: "image:edit-new" }],
+    [{ text: "← Назад", callback_data: "menu:main" }],
   ]);
 });
 
@@ -59,9 +70,9 @@ test("tariffs return to the account menu", () => {
   ]);
 });
 
-test("visual result keeps only the new photo action", () => {
+test("visual result offers one relevant photo action", () => {
   assert.deepEqual(visualResultMenu().inline_keyboard, [[{
-    text: "📷 Новое фото",
-    callback_data: "visual:new-photo",
+    text: "🪄 Изменить это фото",
+    callback_data: "image:edit-current",
   }]]);
 });

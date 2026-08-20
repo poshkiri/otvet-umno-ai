@@ -9,6 +9,7 @@ import {
   mainMenu,
   imageResultMenu,
   imageEditResultMenu,
+  imagesMenu,
   profileMenu,
   paywallMenu,
   quickCategory,
@@ -368,13 +369,13 @@ export function createBot(
       caption: [
         `Привет, ${escapeTelegramHtml(displayName(ctx.from?.first_name))} 👋`,
         "",
-        "<b>Не понимаешь, что перед тобой?</b>",
+        "<b>Покажи или спроси</b>",
         "",
-        "Отправь фото товара, этикетки, ошибки или задачи — я объясню простыми словами.",
+        "Напиши вопрос, отправь голосовое, фото, скриншот или PDF — я сам пойму задачу.",
         "",
-        "Также можно написать вопрос или записать голосовое.",
+        "Для создания и изменения изображений открой раздел «Картинки».",
         "",
-        `<b>Отправь фото прямо сейчас.</b> ${accessLine}`,
+        accessLine,
       ].join("\n"),
       parse_mode: "HTML",
       reply_markup: mainMenu(),
@@ -388,12 +389,16 @@ export function createBot(
 
   bot.command("menu", async (ctx) => {
     ctx.session.awaitingInput = false;
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
     await ctx.reply(
       [
-        "<b>Что разберём?</b>",
+        "<b>Чем помочь?</b>",
         "",
-        "Отправь фото, фото документа, голосовое или обычный вопрос.",
-        "Для новой картинки напиши: «Нарисуй…»",
+        "Выбери раздел. Обычный вопрос можно просто написать без выбора.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: mainMenu() },
     );
@@ -542,16 +547,76 @@ export function createBot(
     ctx.session.awaitingInput = false;
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
     await ctx.answerCallbackQuery();
     await editOrReplyMenu(
       ctx,
       [
-        "<b>Что разберём?</b>",
+        "<b>Чем помочь?</b>",
         "",
-        "Отправь фото, фото документа, голосовое или обычный вопрос.",
-        "Для новой картинки напиши: «Нарисуй…»",
+        "Выбери раздел. Обычный вопрос можно просто написать без выбора.",
       ].join("\n"),
       mainMenu(),
+      "HTML",
+    );
+  });
+
+  bot.callbackQuery("menu:chat", async (ctx) => {
+    ctx.session.awaitingInput = false;
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      [
+        "<b>💬 Чат</b>",
+        "",
+        "Напиши вопрос или отправь голосовое.",
+        "",
+        "Могу объяснить тему, решить задачу, написать или проверить текст, перевести и помочь составить план.",
+      ].join("\n"),
+      new InlineKeyboard().text("← Назад", "menu:main"),
+      "HTML",
+    );
+  });
+
+  bot.callbackQuery("menu:analyze", async (ctx) => {
+    ctx.session.awaitingInput = false;
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      [
+        "<b>🔍 Разобрать</b>",
+        "",
+        "Отправь фотографию, скриншот или PDF.",
+        "",
+        "Я распознаю товар, этикетку, документ, ошибку или учебную задачу и объясню простыми словами.",
+      ].join("\n"),
+      new InlineKeyboard().text("← Назад", "menu:main"),
+      "HTML",
+    );
+  });
+
+  bot.callbackQuery("menu:images", async (ctx) => {
+    ctx.session.awaitingInput = false;
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      "<b>🎨 Картинки</b>\n\nСоздай новое изображение или измени свою фотографию.",
+      imagesMenu(),
       "HTML",
     );
   });
@@ -940,9 +1005,37 @@ export function createBot(
   bot.callbackQuery(["image:create", "image:again"], async (ctx) => {
     ctx.session.awaitingImagePrompt = true;
     ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
     delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
     await ctx.answerCallbackQuery();
     await ctx.reply("Что нарисовать? Опиши сюжет, стиль и важные детали одним сообщением.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
+  });
+
+  bot.callbackQuery("image:edit-new", async (ctx) => {
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = true;
+    delete ctx.session.visualResponseId;
+    delete ctx.session.visualSources;
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Отправь фотографию, которую хочешь изменить.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
+  });
+
+  bot.callbackQuery("image:edit-current", async (ctx) => {
+    if (!ctx.session.visualSources?.length) {
+      await ctx.answerCallbackQuery("Сначала отправь фото");
+      return;
+    }
+    ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEditSource = false;
+    ctx.session.awaitingImageEdit = true;
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Что изменить на этой фотографии? Напиши одним сообщением.", {
       reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
     });
   });
@@ -954,6 +1047,7 @@ export function createBot(
     }
     ctx.session.awaitingImageEdit = true;
     ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingImageEditSource = false;
     await ctx.answerCallbackQuery();
     await ctx.reply("Что ещё изменить на этой картинке? Напиши одним сообщением.", {
       reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
@@ -963,17 +1057,24 @@ export function createBot(
   bot.callbackQuery("image:cancel", async (ctx) => {
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
+    ctx.session.awaitingImageEditSource = false;
     await ctx.answerCallbackQuery("Отменено");
-    await ctx.editMessageText("Напиши вопрос, отправь фото, фото документа или голосовое.", {
-      reply_markup: mainMenu(),
-    });
+    await editOrReplyMenu(ctx, "Выбери раздел или просто напиши вопрос.", mainMenu());
   });
 
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
+    if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length) {
+      ctx.session.awaitingImageEdit = false;
+      ctx.session.awaitingImageEditSource = true;
+      await ctx.reply("Сначала отправь фотографию, которую нужно изменить.", {
+        reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+      });
+      return;
+    }
     const editPrompt = ctx.session.awaitingImageEdit
       ? ctx.message.text.trim()
-      : extractImageEditPrompt(ctx.message.text);
+      : undefined;
     if (editPrompt && ctx.session.visualSources?.length) {
       ctx.session.awaitingImageEdit = false;
       await editImageForUser(
@@ -1086,8 +1187,9 @@ export function createBot(
         if (!transcript) throw new Error("Не удалось распознать голос");
         return transcript;
       });
-      const editPrompt = extractImageEditPrompt(transcript);
+      const editPrompt = ctx.session.awaitingImageEdit ? transcript.trim() : undefined;
       if (editPrompt && ctx.session.visualSources?.length) {
+        ctx.session.awaitingImageEdit = false;
         db.releaseRequest(reservation);
         await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
         await editImageForUser(
@@ -1429,21 +1531,35 @@ async function processVisualItems(
     return;
   }
   const caption = items.find((item) => item.caption?.trim())?.caption;
-  const editPrompt = caption ? extractImageEditPrompt(caption) : undefined;
-  if (editPrompt) {
-    await editImageForUser(
-      ctx, config, db, ai,
-      items.map((item) => ({ fileId: item.fileId, mimeType: item.mimeType })),
-      editPrompt,
-      {
-        plus: config.PLUS_IMAGE_LIMIT,
-        pro: config.PRO_IMAGE_LIMIT,
-        global: config.GLOBAL_IMAGE_LIMIT,
-        windowSeconds: config.IMAGE_WINDOW_HOURS * 60 * 60,
-      },
-      resourceLimiter,
-      track,
-    );
+  if (ctx.session.awaitingImageEditSource) {
+    ctx.session.awaitingImageEditSource = false;
+    ctx.session.visualSources = items.map((item) => ({
+      fileId: item.fileId,
+      mimeType: item.mimeType,
+    }));
+    if (caption?.trim()) {
+      await editImageForUser(
+        ctx,
+        config,
+        db,
+        ai,
+        ctx.session.visualSources,
+        caption.trim(),
+        {
+          plus: config.PLUS_IMAGE_LIMIT,
+          pro: config.PRO_IMAGE_LIMIT,
+          global: config.GLOBAL_IMAGE_LIMIT,
+          windowSeconds: config.IMAGE_WINDOW_HOURS * 60 * 60,
+        },
+        resourceLimiter,
+        track,
+      );
+      return;
+    }
+    ctx.session.awaitingImageEdit = true;
+    await ctx.reply("Фото получил. Теперь напиши, что именно изменить.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
+    });
     return;
   }
   const reservation = await reserveForUser(ctx, db, track);
@@ -1526,7 +1642,7 @@ async function replyResult(ctx: BotContext, result: string): Promise<void> {
 }
 
 async function replyVisualResult(ctx: BotContext, result: string): Promise<void> {
-  const text = `${result}\n\nМожешь задать вопрос по этой фотографии или отправить новую.`;
+  const text = `${result}\n\nМожешь задать вопрос по этой фотографии, отправить новую или изменить её кнопкой ниже.`;
   const chunks = splitLongMessage(text);
   for (let index = 0; index < chunks.length; index += 1) {
     await ctx.reply(
