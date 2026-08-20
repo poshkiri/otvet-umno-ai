@@ -1,5 +1,7 @@
 import OpenAI, { toFile } from "openai";
 import {
+  buildImageEditPrompt,
+  buildImageGenerationPrompt,
   buildGenerationPrompt,
   buildRefinementPrompt,
   DOCUMENT_SYSTEM_PROMPT,
@@ -159,7 +161,7 @@ export class AiService {
     return this.imageLimiter.run(async () => {
       const response = await this.client.images.generate({
         model: this.imageModel,
-        prompt: prompt.trim(),
+        prompt: buildImageGenerationPrompt(prompt),
         size: "1024x1024",
         quality: "medium",
         output_format: "png",
@@ -187,12 +189,7 @@ export class AiService {
       const response = await this.client.images.edit({
         model: this.imageModel,
         image: files,
-        prompt: [
-          "Отредактируй именно присланное изображение по просьбе пользователя.",
-          "Сохрани узнаваемые черты лица, причёску, позу, пропорции человека и общую композицию, если пользователь не просит изменить их.",
-          "Не добавляй новых людей и не меняй личность человека.",
-          `Просьба пользователя: ${prompt.trim()}`,
-        ].join("\n"),
+        prompt: buildImageEditPrompt(prompt),
         size: "1024x1024",
         quality: "medium",
         output_format: "png",
