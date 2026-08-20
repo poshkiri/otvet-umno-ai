@@ -1658,7 +1658,7 @@ function extractImagePrompt(text: string, awaiting: boolean | undefined): string
 export function extractImageEditPrompt(text: string): string | undefined {
   const value = text.trim();
   if (!value) return undefined;
-  const editIntent = /^(?:пожалуйста[, ]+)?(?:сделай|преврати|измени|обработай|стилизуй|перерисуй|замени|убери|удали|добавь)(?:\s|$)/iu;
+  const editIntent = /^(?:пожалуйста[, ]+)?(?:сделай|сделать|преврати|превратить|измени|изменить|обработай|обработать|стилизуй|стилизовать|перерисуй|перерисовать|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить)(?:\s|$)/iu;
   const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
   return editIntent.test(value) || styleIntent.test(value) ? value : undefined;
 }
