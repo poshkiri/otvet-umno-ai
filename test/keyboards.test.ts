@@ -54,6 +54,7 @@ test("profile groups limits, purchases and personal content", () => {
       { text: "История", callback_data: "menu:history" },
       { text: "Покупки", callback_data: "menu:payments" },
     ],
+    [{ text: "Поддержка", callback_data: "support:start" }],
     [{ text: "Назад", callback_data: "menu:main" }],
   ]);
 });

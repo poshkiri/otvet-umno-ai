@@ -76,6 +76,7 @@ export function profileMenu(): InlineKeyboard {
     .text("Тарифы", "menu:tariffs").row()
     .text("История", "menu:history")
     .text("Покупки", "menu:payments").row()
+    .text("Поддержка", "support:start").row()
     .text("Назад", "menu:main");
 }
 
