@@ -87,6 +87,7 @@ export function tariffsMenu(): InlineKeyboard {
     .text("Разовые пакеты", "menu:credit-packs").row()
     .text("Как купить Stars", "stars:help")
     .text("Мои покупки", "menu:payments").row()
+    .text("Поддержка", "support:start").row()
     .text("Назад", "menu:profile");
 }
 

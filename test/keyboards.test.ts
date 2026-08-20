@@ -72,6 +72,9 @@ test("tariffs return to the account menu", () => {
     { text: "Как купить Stars", callback_data: "stars:help" },
     { text: "Мои покупки", callback_data: "menu:payments" },
   ]);
+  assert.deepEqual(tariffsMenu().inline_keyboard[3], [
+    { text: "Поддержка", callback_data: "support:start" },
+  ]);
 });
 
 test("visual result keeps only the new photo action", () => {
