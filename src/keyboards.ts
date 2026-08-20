@@ -7,7 +7,8 @@ export function mainMenu(miniAppUrl = process.env.MINI_APP_URL): InlineKeyboard 
   if (miniAppUrl?.trim()) keyboard.webApp("Открыть Mini App", miniAppUrl.trim()).row();
   return keyboard
     .text("Личный кабинет", "menu:profile")
-    .text("Тарифы", "menu:tariffs");
+    .text("Тарифы", "menu:tariffs").row()
+    .text("Поддержка", "support:start");
 }
 
 export function paywallMenu(): InlineKeyboard {

@@ -15,6 +15,7 @@ test("main menu keeps the primary actions simple", () => {
       { text: "Личный кабинет", callback_data: "menu:profile" },
       { text: "Тарифы", callback_data: "menu:tariffs" },
     ],
+    [{ text: "Поддержка", callback_data: "support:start" }],
   ]);
 });
 
@@ -25,6 +26,7 @@ test("main menu promotes the Mini App with one primary button", () => {
       { text: "Личный кабинет", callback_data: "menu:profile" },
       { text: "Тарифы", callback_data: "menu:tariffs" },
     ],
+    [{ text: "Поддержка", callback_data: "support:start" }],
   ]);
 });
 
