@@ -11,11 +11,12 @@ import {
 
 test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
+    [{ text: "✨ Примеры", callback_data: "menu:examples" }],
     [
-      { text: "Мой аккаунт", callback_data: "menu:profile" },
-      { text: "Тарифы", callback_data: "menu:tariffs" },
+      { text: "👤 Аккаунт", callback_data: "menu:profile" },
+      { text: "⭐ Тарифы", callback_data: "menu:tariffs" },
     ],
-    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
+    [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
   ]);
 });
 
@@ -35,34 +36,26 @@ test("credit packs stay on a separate screen", () => {
   ]);
 });
 
-test("profile groups limits, purchases and personal content", () => {
+test("profile avoids repeating the balance as a separate screen", () => {
   assert.deepEqual(profileMenu().inline_keyboard, [
+    [{ text: "⭐ Тарифы", callback_data: "menu:tariffs" }],
     [
-      { text: "Мои лимиты", callback_data: "menu:balance" },
-      { text: "Тарифы", callback_data: "menu:tariffs" },
+      { text: "🕘 История", callback_data: "menu:history" },
+      { text: "🧾 Покупки", callback_data: "menu:payments" },
     ],
-    [
-      { text: "История", callback_data: "menu:history" },
-      { text: "Покупки", callback_data: "menu:payments" },
-    ],
-    [{ text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" }],
-    [{ text: "Назад", callback_data: "menu:main" }],
+    [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
+    [{ text: "← Назад", callback_data: "menu:main" }],
   ]);
 });
 
 test("tariffs return to the account menu", () => {
-  assert.deepEqual(tariffsMenu().inline_keyboard[1], [
-    { text: "Разовые пакеты", callback_data: "menu:credit-packs" },
-  ]);
-  assert.deepEqual(tariffsMenu().inline_keyboard.at(-1), [
-    { text: "Назад", callback_data: "menu:profile" },
-  ]);
-  assert.deepEqual(tariffsMenu().inline_keyboard[2], [
-    { text: "Как купить Stars", callback_data: "stars:help" },
-    { text: "Мои покупки", callback_data: "menu:payments" },
-  ]);
-  assert.deepEqual(tariffsMenu().inline_keyboard[3], [
-    { text: "Связаться с поддержкой", url: "https://t.me/PoymiAI_support" },
+  assert.deepEqual(tariffsMenu().inline_keyboard, [
+    [{ text: "⭐ Plus · 299 Stars", callback_data: "subscribe:plus" }],
+    [{ text: "📦 Разовые запросы", callback_data: "menu:credit-packs" }],
+    [
+      { text: "🧾 Покупки", callback_data: "menu:payments" },
+      { text: "← Назад", callback_data: "menu:profile" },
+    ],
   ]);
 });
 

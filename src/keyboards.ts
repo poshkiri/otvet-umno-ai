@@ -6,9 +6,10 @@ export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Мой аккаунт", "menu:profile")
-    .text("Тарифы", "menu:tariffs").row()
-    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL);
+    .text("✨ Примеры", "menu:examples").row()
+    .text("👤 Аккаунт", "menu:profile")
+    .text("⭐ Тарифы", "menu:tariffs").row()
+    .url("💬 Поддержка", SUPPORT_TELEGRAM_URL);
 }
 
 export function paywallMenu(): InlineKeyboard {
@@ -73,22 +74,19 @@ export function refinementsMenu(): InlineKeyboard {
 
 export function profileMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Мои лимиты", "menu:balance")
-    .text("Тарифы", "menu:tariffs").row()
-    .text("История", "menu:history")
-    .text("Покупки", "menu:payments").row()
-    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL).row()
-    .text("Назад", "menu:main");
+    .text("⭐ Тарифы", "menu:tariffs").row()
+    .text("🕘 История", "menu:history")
+    .text("🧾 Покупки", "menu:payments").row()
+    .url("💬 Поддержка", SUPPORT_TELEGRAM_URL).row()
+    .text("← Назад", "menu:main");
 }
 
 export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Plus · 299 Stars", "subscribe:plus").row()
-    .text("Разовые пакеты", "menu:credit-packs").row()
-    .text("Как купить Stars", "stars:help")
-    .text("Мои покупки", "menu:payments").row()
-    .url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL).row()
-    .text("Назад", "menu:profile");
+    .text("⭐ Plus · 299 Stars", "subscribe:plus").row()
+    .text("📦 Разовые запросы", "menu:credit-packs").row()
+    .text("🧾 Покупки", "menu:payments")
+    .text("← Назад", "menu:profile");
 }
 
 export function imageResultMenu(): InlineKeyboard {

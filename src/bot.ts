@@ -556,6 +556,32 @@ export function createBot(
     );
   });
 
+  bot.callbackQuery("menu:examples", async (ctx) => {
+    await ctx.answerCallbackQuery("Нажми на скрытый текст ✨");
+    await editOrReplyMenu(
+      ctx,
+      [
+        "<b>✨ Что можно отправить</b>",
+        "",
+        "📸 <b>Фото товара</b>",
+        "<tg-spoiler>Сфотографируй упаковку и спроси: «Что это и как использовать?»</tg-spoiler>",
+        "",
+        "🎓 <b>Задачу</b>",
+        "<tg-spoiler>Отправь фото примера и напиши: «Реши по шагам».</tg-spoiler>",
+        "",
+        "🎙 <b>Голосовой вопрос</b>",
+        "<tg-spoiler>Запиши вопрос обычными словами — бот распознает и ответит.</tg-spoiler>",
+        "",
+        "🎨 <b>Идею для картинки</b>",
+        "<tg-spoiler>Напиши: «Нарисуй уютное кафе у озера вечером».</tg-spoiler>",
+        "",
+        "<b>Ничего выбирать не нужно — просто отправь задачу.</b>",
+      ].join("\n"),
+      new InlineKeyboard().text("← Назад", "menu:main"),
+      "HTML",
+    );
+  });
+
   bot.callbackQuery("menu:tariffs", async (ctx) => {
     track(ctx.from.id, "pricing_viewed");
     await ctx.answerCallbackQuery();
@@ -568,25 +594,18 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "<b>⭐ Plus — ответы и создание картинок</b>",
+        "<b>⭐ Plus</b>",
         "",
         subscription.active
           ? `Активен до <b>${formatUnixDate(subscription.periodEnd!)}</b>`
           : `<b>${config.PLUS_SUBSCRIPTION_STARS} Stars</b> на 30 дней`,
-        `Включено: <b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>.`,
+        `<b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>.`,
         ...(subscriptionRequests.active
           ? [`Осталось: <b>${subscriptionRequests.remaining}</b> из ${subscriptionRequests.limit} AI-баллов.`]
           : []),
         "",
-        "<b>Списание:</b>",
-        "Вопрос, фото или голос — 1 балл",
-        "Новая картинка — 2 балла",
-        "Изменение фотографии — 3 балла",
-        "",
-        "<b>Разовые пакеты:</b> только вопросы, голос и разбор фото. Не сгорают.",
-        `${CREDIT_PACKAGES.start.credits} запросов — ${CREDIT_PACKAGES.start.stars} ⭐`,
-        `${CREDIT_PACKAGES.plus.credits} запросов — ${CREDIT_PACKAGES.plus.stars} ⭐`,
-        `${CREDIT_PACKAGES.pro.credits} запросов — ${CREDIT_PACKAGES.pro.stars} ⭐`,
+        "Ответ, фото, PDF или голос — 1 балл",
+        "Картинка — 2 · изменение фото — 3",
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active
@@ -623,7 +642,7 @@ export function createBot(
 
   bot.callbackQuery("subscribe:plus", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await clearCallbackKeyboard(ctx);
+    await dismissCallbackMessage(ctx);
     track(ctx.from.id, "subscription_invoice_created", "plus", {
       stars: config.PLUS_SUBSCRIPTION_STARS,
     });
@@ -637,7 +656,11 @@ export function createBot(
     });
     await ctx.reply(
       `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
-      { reply_markup: new InlineKeyboard().url(`Оплатить ${config.PLUS_SUBSCRIPTION_STARS} ⭐`, invoiceUrl) },
+      {
+        reply_markup: new InlineKeyboard()
+          .url(`Оплатить ${config.PLUS_SUBSCRIPTION_STARS} ⭐`, invoiceUrl).row()
+          .text("← Тарифы", "menu:tariffs"),
+      },
     );
   });
 
@@ -689,14 +712,18 @@ export function createBot(
       stars: selected.stars,
     });
     await ctx.answerCallbackQuery();
-    await clearCallbackKeyboard(ctx);
+    await dismissCallbackMessage(ctx);
     await ctx.replyWithInvoice(
       `Пакет «${selected.title}»`,
       `${selected.credits} запросов к Пойми AI. Запросы не сгорают.`,
       createPaymentPayload(packageId, ctx.from.id),
       "XTR",
       [{ label: `${selected.credits} запросов`, amount: selected.stars }],
-      { reply_markup: new InlineKeyboard().pay(`Оплатить ${selected.stars} ⭐`) },
+      {
+        reply_markup: new InlineKeyboard()
+          .pay(`Оплатить ${selected.stars} ⭐`).row()
+          .text("← Тарифы", "menu:tariffs"),
+      },
     );
   });
 
@@ -736,8 +763,6 @@ export function createBot(
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
-        "",
-        "Здесь можно проверить остаток запросов, покупки и подписку.",
       ].join("\n"),
       profileMenu(),
       "HTML",
@@ -1536,11 +1561,34 @@ async function editOrReplyMenu(
   keyboard: InlineKeyboard,
   parseMode?: "HTML",
 ): Promise<void> {
-  await clearCallbackKeyboard(ctx);
+  if (ctx.callbackQuery?.message) {
+    const message = ctx.callbackQuery.message;
+    if (!("caption" in message)) {
+      try {
+        await ctx.editMessageText(text, {
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+          reply_markup: keyboard,
+        });
+        return;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("message is not modified")) return;
+      }
+    }
+    await dismissCallbackMessage(ctx);
+  }
   await ctx.reply(text, {
     ...(parseMode ? { parse_mode: parseMode } : {}),
     reply_markup: keyboard,
   });
+}
+
+async function dismissCallbackMessage(ctx: BotContext): Promise<void> {
+  if (!ctx.callbackQuery?.message) return;
+  try {
+    await ctx.deleteMessage();
+  } catch {
+    await clearCallbackKeyboard(ctx);
+  }
 }
 
 async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
