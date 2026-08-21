@@ -43,6 +43,7 @@ import {
   type FlowId,
   type ImageAllowance,
   type RefinementId,
+  type SubscriptionRequestAllowance,
 } from "./types.js";
 import { cleanTelegramText, displayName, escapeTelegramHtml, splitLongMessage } from "./utils.js";
 import { Semaphore } from "./semaphore.js";
@@ -473,7 +474,17 @@ export function createBot(
   bot.command("balance", async (ctx) => {
     if (!ctx.from) return;
     const access = db.getAccess(ctx.from.id);
-    await ctx.reply(balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan));
+    const subscriptionRequests = db.getSubscriptionRequestAllowance(
+      ctx.from.id,
+      config.PLUS_REQUEST_LIMIT,
+    );
+    await ctx.reply(balanceText(
+      access.freeUsed,
+      access.freeLimit,
+      access.credits,
+      access.plan,
+      subscriptionRequests,
+    ));
   });
 
   bot.command("paysupport", async (ctx) => {
@@ -846,7 +857,9 @@ export function createBot(
         "Ответ, фото, PDF, голос — 1 балл",
         "Новая картинка — 2 · изменение фото — 3",
         "",
-        userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        ...(subscription.active
+          ? [`Разовые запросы: ${access.credits}`]
+          : [userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan)]),
         ...(subscription.active
           ? [subscription.recurring
               ? `Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}.`
@@ -1050,12 +1063,22 @@ export function createBot(
     await ctx.answerCallbackQuery();
     const access = db.getAccess(ctx.from.id);
     const subscription = db.getSubscriptionAccess(ctx.from.id);
+    const subscriptionRequests = db.getSubscriptionRequestAllowance(
+      ctx.from.id,
+      config.PLUS_REQUEST_LIMIT,
+    );
     await editOrReplyMenu(
       ctx,
       [
         "<b>👤 Аккаунт</b>",
         "",
-        userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        userTariffStatus(
+          access.freeUsed,
+          access.freeLimit,
+          access.credits,
+          access.plan,
+          subscriptionRequests,
+        ),
         ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
       ].join("\n"),
       profileMenu(),
@@ -1101,10 +1124,20 @@ export function createBot(
     const access = db.getAccess(ctx.from.id);
     const images = db.getImageAllowance(ctx.from.id, imageLimits);
     const subscription = db.getSubscriptionAccess(ctx.from.id);
+    const subscriptionRequests = db.getSubscriptionRequestAllowance(
+      ctx.from.id,
+      config.PLUS_REQUEST_LIMIT,
+    );
     await editOrReplyMenu(
       ctx,
       [
-        balanceText(access.freeUsed, access.freeLimit, access.credits, access.plan),
+        balanceText(
+          access.freeUsed,
+          access.freeLimit,
+          access.credits,
+          access.plan,
+          subscriptionRequests,
+        ),
         "",
         imageAllowanceText(images),
         ...(subscription.active ? [
@@ -1294,19 +1327,19 @@ export function createBot(
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
     if (ctx.from.id === config.ADMIN_TELEGRAM_ID && ctx.session.adminAwaitingUserId) {
-      ctx.session.adminAwaitingUserId = false;
-      const telegramId = Number(ctx.message.text.trim());
-      if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
-        await ctx.reply("Не похоже на Telegram ID. Нужны только цифры, например: 1264985917.");
+      const telegramId = parseAdminTelegramId(ctx.message.text);
+      if (!telegramId) {
+        await ctx.reply("Не похоже на Telegram ID. Пришли цифры или текст вида: ID: 1264985917.");
         return;
       }
       const card = formatAdminUserCard(db, telegramId, config.PLUS_REQUEST_LIMIT);
       if (!card) {
-        await ctx.reply("Пользователь с таким ID ещё не запускал бота.", {
-          reply_markup: new InlineKeyboard().text("🔎 Искать снова", "admin:user-search"),
+        await ctx.reply("Пользователь с таким ID ещё не запускал бота. Можешь сразу прислать другой ID.", {
+          reply_markup: new InlineKeyboard().text("Отмена", "admin:cancel-search"),
         });
         return;
       }
+      ctx.session.adminAwaitingUserId = false;
       await ctx.reply(card, {
         parse_mode: "HTML",
         reply_markup: adminUserKeyboard(telegramId),
@@ -1928,17 +1961,48 @@ async function handleError(ctx: BotContext, error: unknown): Promise<void> {
   );
 }
 
-function balanceText(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
+function balanceText(
+  freeUsed: number,
+  freeLimit: number,
+  credits: number,
+  plan: string,
+  subscription?: SubscriptionRequestAllowance,
+): string {
   if (plan === "pro") return "Тариф: безлимит";
+  if (subscription?.active) {
+    return [
+      `Plus AI-баллы: ${subscription.remaining} из ${subscription.limit}`,
+      `Разовые запросы: ${credits}`,
+    ].join("\n");
+  }
   return `Бесплатно осталось: ${Math.max(0, freeLimit - freeUsed)}\nКупленных запросов: ${credits}`;
 }
 
-function userTariffStatus(freeUsed: number, freeLimit: number, credits: number, plan: string): string {
+export function userTariffStatus(
+  freeUsed: number,
+  freeLimit: number,
+  credits: number,
+  plan: string,
+  subscription?: SubscriptionRequestAllowance,
+): string {
   if (plan === "pro") return "Ваш доступ: команда бота, без ограничений.";
+  if (subscription?.active) {
+    return [
+      `Plus AI-баллы: ${subscription.remaining} из ${subscription.limit}`,
+      `Разовые запросы: ${credits}`,
+    ].join("\n");
+  }
   return [
     `Бесплатных запросов: ${Math.max(0, freeLimit - freeUsed)}`,
     `Купленных запросов: ${credits}`,
   ].join("\n");
+}
+
+export function parseAdminTelegramId(value: string): number | undefined {
+  const matches = value.match(/\d+/g);
+  if (matches?.length !== 1) return undefined;
+  const telegramId = Number(matches[0]);
+  return Number.isSafeInteger(telegramId) && telegramId > 0 ? telegramId : undefined;
 }
 
 async function editOrReplyMenu(
