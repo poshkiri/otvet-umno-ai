@@ -102,7 +102,7 @@ export interface BusinessStats {
   popularPackage?: string | undefined;
 }
 
-export type ImageTier = "free" | "plus" | "pro";
+export type ImageTier = "free" | "credits" | "plus" | "pro";
 
 export interface ImageAllowance {
   allowed: boolean;
@@ -124,6 +124,11 @@ export interface SubscriptionAccess {
   active: boolean;
   planId?: "plus" | undefined;
   periodEnd?: number | undefined;
+  periodStart?: number | undefined;
+  requestLimit?: number | undefined;
+  imageLimit?: number | undefined;
+  durationMonths?: number | undefined;
+  recurring?: boolean | undefined;
   autoRenew: boolean;
   latestChargeId?: string | undefined;
 }

@@ -1,6 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { CategoryId, FlowId } from "./types.js";
-import { CREDIT_PACKAGES } from "./payments.js";
+import { CREDIT_PACKAGES, PLUS_PLANS } from "./payments.js";
 
 export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
 
@@ -21,7 +21,7 @@ export function imagesMenu(): InlineKeyboard {
 
 export function paywallMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Подключить Plus", "subscribe:plus").row()
+    .text("⭐ Выбрать Plus", "menu:plus-plans").row()
     .text("📦 Купить запросы", "menu:credit-packs");
 }
 
@@ -90,10 +90,19 @@ export function profileMenu(): InlineKeyboard {
 
 export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Plus · 399 Stars", "subscribe:plus").row()
+    .text("⭐ Выбрать Plus", "menu:plus-plans").row()
     .text("📦 Разовые запросы", "menu:credit-packs").row()
     .text("🧾 Покупки", "menu:payments")
     .text("← Назад", "menu:profile");
+}
+
+export function plusPlansMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(`1 месяц · ${PLUS_PLANS["1m"].stars} ⭐`, "subscribe:1m").row()
+    .text(`3 месяца · ${PLUS_PLANS["3m"].stars} ⭐`, "subscribe:3m").row()
+    .text(`6 месяцев · ${PLUS_PLANS["6m"].stars} ⭐`, "subscribe:6m").row()
+    .text(`12 месяцев · ${PLUS_PLANS["12m"].stars} ⭐`, "subscribe:12m").row()
+    .text("← К тарифам", "menu:tariffs");
 }
 
 export function imageResultMenu(): InlineKeyboard {

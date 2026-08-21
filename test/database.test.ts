@@ -266,7 +266,7 @@ test("Plus request allowance is monthly, atomic and restores failed requests", (
   db.close();
 });
 
-test("image limits protect free trial, Plus rolling quota and failed requests", () => {
+test("image limits protect free trial, Plus period quota and failed requests", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 5);
   const limits = { plus: 2, pro: 3, global: 10, windowSeconds: 86_400 };
@@ -285,13 +285,57 @@ test("image limits protect free trial, Plus rolling quota and failed requests", 
   assert.equal(db.getImageAllowance(5101, limits, now).reason, "trial_used");
 
   db.ensureUser(5102);
-  db.recordSubscriptionPayment(5102, 299, "subscription-v1:plus:5102", "sub-5102", now + 2_592_000);
+  db.recordSubscriptionPayment(
+    5102,
+    299,
+    "subscription-v1:plus:5102",
+    "sub-5102",
+    now + 2_592_000,
+    true,
+    { periodStart: now, imageLimit: 2 },
+  );
   const first = db.reserveImageGeneration(5102, limits, now);
   const second = db.reserveImageGeneration(5102, limits, now + 1);
   assert.ok("id" in first && "id" in second);
   const blocked = db.reserveImageGeneration(5102, limits, now + 2);
   assert.equal("id" in blocked, false);
   if (!("id" in blocked)) assert.equal(blocked.reason, "user_limit");
-  assert.equal(db.getImageAllowance(5102, limits, now + 86_401).allowed, true);
+  assert.equal(db.getImageAllowance(5102, limits, now + 86_401).allowed, false);
+  db.close();
+});
+
+test("prepaid Plus stores its own limits and one-time credits unlock images", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 0, 100, 20);
+  const now = 1_800_000_000;
+  const limits = { plus: 20, pro: 100, global: 1_000, windowSeconds: 2_592_000 };
+  db.ensureUser(5201);
+  db.recordSubscriptionPayment(
+    5201,
+    999,
+    "subscription-v1:plus:3m:5201",
+    "sub-5201",
+    now + 3 * 2_592_000,
+    true,
+    {
+      periodStart: now,
+      requestLimit: 360,
+      imageLimit: 75,
+      durationMonths: 3,
+      recurring: false,
+    },
+  );
+  const access = db.getSubscriptionAccess(5201, now);
+  assert.equal(access.requestLimit, 360);
+  assert.equal(access.imageLimit, 75);
+  assert.equal(access.durationMonths, 3);
+  assert.equal(access.recurring, false);
+  assert.equal(db.getImageAllowance(5201, limits, now).limit, 75);
+
+  db.ensureUser(5202);
+  db.recordPayment(5202, "start", 50, 199, "credits-v1:start:5202", "credits-5202");
+  const creditAllowance = db.getImageAllowance(5202, limits, now);
+  assert.equal(creditAllowance.allowed, true);
+  assert.equal(creditAllowance.tier, "credits");
   db.close();
 });

@@ -26,6 +26,7 @@ export class BotDatabase {
     path: string,
     private readonly freeLimit: number,
     private readonly subscriptionLimit = 50,
+    private readonly subscriptionImageLimit = 20,
   ) {
     const absolutePath = resolve(path);
     mkdirSync(dirname(absolutePath), { recursive: true });
@@ -133,7 +134,12 @@ export class BotDatabase {
         telegram_id INTEGER PRIMARY KEY,
         plan_id TEXT NOT NULL CHECK (plan_id = 'plus'),
         latest_charge_id TEXT NOT NULL,
+        period_start INTEGER NOT NULL DEFAULT 0,
         period_end INTEGER NOT NULL,
+        request_limit INTEGER NOT NULL DEFAULT 100,
+        image_limit INTEGER NOT NULL DEFAULT 20,
+        duration_months INTEGER NOT NULL DEFAULT 1,
+        recurring INTEGER NOT NULL DEFAULT 1,
         auto_renew INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
@@ -243,6 +249,23 @@ export class BotDatabase {
         "ALTER TABLE subscription_request_usage ADD COLUMN units INTEGER NOT NULL DEFAULT 1 CHECK (units > 0)",
       );
     }
+    const subscriptionColumns = this.db.prepare(
+      "PRAGMA table_info(subscriptions)",
+    ).all() as Array<{ name: string }>;
+    const addSubscriptionColumn = (name: string, definition: string): void => {
+      if (!subscriptionColumns.some((column) => column.name === name)) {
+        this.db.exec(`ALTER TABLE subscriptions ADD COLUMN ${name} ${definition}`);
+      }
+    };
+    addSubscriptionColumn("period_start", "INTEGER NOT NULL DEFAULT 0");
+    addSubscriptionColumn("request_limit", "INTEGER NOT NULL DEFAULT 100");
+    addSubscriptionColumn("image_limit", "INTEGER NOT NULL DEFAULT 20");
+    addSubscriptionColumn("duration_months", "INTEGER NOT NULL DEFAULT 1");
+    addSubscriptionColumn("recurring", "INTEGER NOT NULL DEFAULT 1");
+    this.db.prepare(`
+      UPDATE subscriptions SET period_start = MAX(0, period_end - ?)
+      WHERE period_start = 0
+    `).run(30 * 24 * 60 * 60);
   }
 
   ensureUser(telegramId: number, username?: string, firstName?: string): void {
@@ -362,12 +385,15 @@ export class BotDatabase {
         this.db.prepare(
           "UPDATE users SET free_used = free_used + 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
         ).run(telegramId);
-      } else if (this.subscriptionLimit > 0 && this.getSubscriptionAccess(telegramId, now).active) {
+      } else if (this.getSubscriptionAccess(telegramId, now).active) {
+        const subscription = this.getSubscriptionAccess(telegramId, now);
+        const limit = subscription.requestLimit ?? this.subscriptionLimit;
+        const periodStart = subscription.periodStart ?? now - windowSeconds;
         const usage = this.db.prepare(`
           SELECT COALESCE(SUM(units), 0) AS used FROM subscription_request_usage
-          WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
-        `).get(telegramId, now - windowSeconds) as { used: number };
-        if (usage.used < this.subscriptionLimit) {
+          WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at >= ?
+        `).get(telegramId, periodStart) as { used: number };
+        if (usage.used < limit) {
           const id = `subscription:${randomUUID()}`;
           this.db.prepare(`
             INSERT INTO subscription_request_usage (id, telegram_id, units, created_at, updated_at)
@@ -455,15 +481,18 @@ export class BotDatabase {
     if (!Number.isInteger(units) || units < 1) throw new Error("Subscription units must be positive");
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (!this.getSubscriptionAccess(telegramId, now).active) {
+      const subscription = this.getSubscriptionAccess(telegramId, now);
+      if (!subscription.active) {
         this.db.exec("ROLLBACK");
         return undefined;
       }
+      const limit = subscription.requestLimit ?? this.subscriptionLimit;
+      const periodStart = subscription.periodStart ?? now - windowSeconds;
       const usage = this.db.prepare(`
         SELECT COALESCE(SUM(units), 0) AS used FROM subscription_request_usage
-        WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at > ?
-      `).get(telegramId, now - windowSeconds) as { used: number };
-      if (usage.used + units > this.subscriptionLimit) {
+        WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at >= ?
+      `).get(telegramId, periodStart) as { used: number };
+      if (usage.used + units > limit) {
         this.db.exec("ROLLBACK");
         return undefined;
       }
@@ -560,7 +589,8 @@ export class BotDatabase {
   ): SubscriptionRequestAllowance {
     const access = this.getSubscriptionAccess(telegramId, now);
     if (!access.active) return { active: false, used: 0, limit, remaining: 0 };
-    const periodStart = Math.max(now - windowSeconds, (access.periodEnd ?? now) - windowSeconds);
+    const effectiveLimit = access.requestLimit ?? limit;
+    const periodStart = access.periodStart ?? Math.max(now - windowSeconds, (access.periodEnd ?? now) - windowSeconds);
     const usage = this.db.prepare(`
       SELECT COALESCE(SUM(units), 0) AS used, MIN(created_at) AS oldest FROM subscription_request_usage
       WHERE telegram_id = ? AND status IN ('reserved', 'consumed') AND created_at >= ?
@@ -568,20 +598,26 @@ export class BotDatabase {
     return {
       active: true,
       used: usage.used,
-      limit,
-      remaining: Math.max(0, limit - usage.used),
-      resetAt: usage.used >= limit ? (usage.oldest ?? now) + windowSeconds : undefined,
+      limit: effectiveLimit,
+      remaining: Math.max(0, effectiveLimit - usage.used),
+      resetAt: usage.used >= effectiveLimit ? access.periodEnd : undefined,
     };
   }
 
   getSubscriptionAccess(telegramId: number, now = Math.floor(Date.now() / 1000)): SubscriptionAccess {
     const row = this.db.prepare(`
-      SELECT plan_id, latest_charge_id, period_end, auto_renew
+      SELECT plan_id, latest_charge_id, period_start, period_end, request_limit,
+             image_limit, duration_months, recurring, auto_renew
       FROM subscriptions WHERE telegram_id = ?
     `).get(telegramId) as {
       plan_id: "plus";
       latest_charge_id: string;
       period_end: number;
+      period_start: number;
+      request_limit: number;
+      image_limit: number;
+      duration_months: number;
+      recurring: number;
       auto_renew: number;
     } | undefined;
     if (!row || row.period_end <= now) return { active: false, autoRenew: false };
@@ -589,6 +625,11 @@ export class BotDatabase {
       active: true,
       planId: row.plan_id,
       periodEnd: row.period_end,
+      periodStart: row.period_start,
+      requestLimit: row.request_limit,
+      imageLimit: row.image_limit,
+      durationMonths: row.duration_months,
+      recurring: row.recurring === 1,
       autoRenew: row.auto_renew === 1,
       latestChargeId: row.latest_charge_id,
     };
@@ -601,7 +642,19 @@ export class BotDatabase {
     chargeId: string,
     periodEnd: number,
     startsNewSubscription = false,
+    options?: {
+      periodStart?: number;
+      requestLimit?: number;
+      imageLimit?: number;
+      durationMonths?: number;
+      recurring?: boolean;
+    },
   ): boolean {
+    const periodStart = options?.periodStart ?? periodEnd - 30 * 24 * 60 * 60;
+    const requestLimit = options?.requestLimit ?? this.subscriptionLimit;
+    const imageLimit = options?.imageLimit ?? this.subscriptionImageLimit;
+    const durationMonths = options?.durationMonths ?? 1;
+    const recurring = options?.recurring ?? true;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = this.db.prepare(`
@@ -614,15 +667,34 @@ export class BotDatabase {
         return false;
       }
       this.db.prepare(`
-        INSERT INTO subscriptions (telegram_id, plan_id, latest_charge_id, period_end, auto_renew)
-        VALUES (?, 'plus', ?, ?, 1)
+        INSERT INTO subscriptions (
+          telegram_id, plan_id, latest_charge_id, period_start, period_end,
+          request_limit, image_limit, duration_months, recurring, auto_renew
+        ) VALUES (?, 'plus', ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(telegram_id) DO UPDATE SET
           plan_id = 'plus',
           latest_charge_id = CASE WHEN ? = 1
             THEN excluded.latest_charge_id ELSE subscriptions.latest_charge_id END,
-          period_end = MAX(subscriptions.period_end, excluded.period_end), auto_renew = 1,
+          period_start = excluded.period_start,
+          period_end = MAX(subscriptions.period_end, excluded.period_end),
+          request_limit = excluded.request_limit,
+          image_limit = excluded.image_limit,
+          duration_months = excluded.duration_months,
+          recurring = excluded.recurring,
+          auto_renew = excluded.auto_renew,
           updated_at = CURRENT_TIMESTAMP
-      `).run(telegramId, chargeId, periodEnd, startsNewSubscription ? 1 : 0);
+      `).run(
+        telegramId,
+        chargeId,
+        periodStart,
+        periodEnd,
+        requestLimit,
+        imageLimit,
+        durationMonths,
+        recurring ? 1 : 0,
+        recurring ? 1 : 0,
+        startsNewSubscription ? 1 : 0,
+      );
       this.db.exec("COMMIT");
       return true;
     } catch (error) {
@@ -737,10 +809,11 @@ export class BotDatabase {
         return allowance;
       }
       const id = randomUUID();
+      const storedTier = allowance.tier === "credits" ? "plus" : allowance.tier;
       this.db.prepare(`
         INSERT INTO image_generations (id, telegram_id, tier, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?)
-      `).run(id, telegramId, allowance.tier, now, now);
+      `).run(id, telegramId, storedTier, now, now);
       if (allowance.tier === "free") {
         this.db.prepare(`
           UPDATE users SET free_image_used = 1, updated_at = CURRENT_TIMESTAMP
@@ -814,15 +887,21 @@ export class BotDatabase {
     now: number,
   ): ImageAllowance {
     const user = this.db.prepare(`
-      SELECT free_image_used, plan FROM users WHERE telegram_id = ?
-    `).get(telegramId) as { free_image_used: number; plan: string } | undefined;
+      SELECT free_image_used, plan, credits FROM users WHERE telegram_id = ?
+    `).get(telegramId) as { free_image_used: number; plan: string; credits: number } | undefined;
     const subscription = this.getSubscriptionAccess(telegramId, now);
-    const tier: ImageTier = user?.plan === "pro" ? "pro" : subscription.active ? "plus" : "free";
-    const limit = tier === "pro" ? limits.pro : tier === "plus" ? limits.plus : 1;
+    const tier: ImageTier = user?.plan === "pro"
+      ? "pro"
+      : subscription.active
+        ? "plus"
+        : (user?.credits ?? 0) > 0 ? "credits" : "free";
+    const limit = tier === "pro"
+      ? limits.pro
+      : tier === "plus"
+        ? subscription.imageLimit ?? limits.plus
+        : tier === "credits" ? limits.plus : 1;
     const cutoff = now - limits.windowSeconds;
-    const userCutoff = tier === "plus"
-      ? Math.max(cutoff, (subscription.periodEnd ?? now) - 30 * 24 * 60 * 60)
-      : cutoff;
+    const userCutoff = tier === "plus" ? subscription.periodStart ?? cutoff : cutoff;
     const global = this.db.prepare(`
       SELECT COUNT(*) AS used, MIN(created_at) AS oldest FROM image_generations
       WHERE status IN ('reserved', 'completed') AND created_at > ?
@@ -853,7 +932,9 @@ export class BotDatabase {
       used: usage.used,
       limit,
       remaining: Math.max(0, limit - usage.used),
-      resetAt: usage.used >= limit ? (usage.oldest ?? now) + limits.windowSeconds : undefined,
+      resetAt: usage.used >= limit
+        ? tier === "plus" ? subscription.periodEnd : (usage.oldest ?? now) + limits.windowSeconds
+        : undefined,
       subscriptionEndsAt: subscription.periodEnd,
       reason: usage.used >= limit ? "user_limit" : undefined,
     };

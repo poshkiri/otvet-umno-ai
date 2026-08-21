@@ -11,6 +11,7 @@ import {
   imageEditResultMenu,
   imagesMenu,
   profileMenu,
+  plusPlansMenu,
   paywallMenu,
   quickCategory,
   refinementsMenu,
@@ -21,10 +22,12 @@ import {
 } from "./keyboards.js";
 import {
   CREDIT_PACKAGES,
+  PLUS_PLANS,
   PLUS_SUBSCRIPTION_PERIOD_SECONDS,
   createPaymentPayload,
   createSubscriptionPayload,
   isCreditPackageId,
+  isPlusPlanId,
   parsePaymentPayload,
   parseSubscriptionPayload,
 } from "./payments.js";
@@ -178,6 +181,7 @@ export function createBot(
       const parsed = parsePaymentPayload(query.invoice_payload);
       const subscription = parseSubscriptionPayload(query.invoice_payload);
       const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+      const selectedPlan = subscription ? PLUS_PLANS[subscription.productId] : undefined;
       const validCredits = Boolean(
         parsed
         && selected
@@ -187,16 +191,17 @@ export function createBot(
       );
       const validSubscription = Boolean(
         subscription
+        && selectedPlan
         && subscription.telegramId === query.from.id
         && query.currency === "XTR"
-        && query.total_amount === config.PLUS_SUBSCRIPTION_STARS,
+        && query.total_amount === selectedPlan.stars,
       );
       const valid = validCredits || validSubscription;
       if (valid) {
         db.ensureUser(query.from.id, query.from.username, query.from.first_name);
         track(query.from.id, "checkout_confirmed", subscription ? "plus_subscription" : selected?.id, {
           package_id: subscription ? "plus_subscription" : selected?.id,
-          stars: subscription ? config.PLUS_SUBSCRIPTION_STARS : selected?.stars,
+          stars: selectedPlan?.stars ?? selected?.stars,
         });
       }
       await ctx.answerPreCheckoutQuery(
@@ -215,36 +220,51 @@ export function createBot(
     }
     db.ensureUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
     const subscription = parseSubscriptionPayload(payment.invoice_payload);
+    const selectedPlan = subscription ? PLUS_PLANS[subscription.productId] : undefined;
     if (
       subscription
+      && selectedPlan
       && subscription.telegramId === ctx.from.id
       && payment.currency === "XTR"
-      && payment.total_amount === config.PLUS_SUBSCRIPTION_STARS
+      && payment.total_amount === selectedPlan.stars
     ) {
+      const periodStart = Math.floor(Date.now() / 1000);
       const periodEnd = payment.subscription_expiration_date
-        ?? Math.floor(Date.now() / 1000) + PLUS_SUBSCRIPTION_PERIOD_SECONDS;
+        ?? periodStart + selectedPlan.months * PLUS_SUBSCRIPTION_PERIOD_SECONDS;
       const activated = db.recordSubscriptionPayment(
         ctx.from.id,
-        config.PLUS_SUBSCRIPTION_STARS,
+        selectedPlan.stars,
         payment.invoice_payload,
         payment.telegram_payment_charge_id,
         periodEnd,
-        payment.is_first_recurring === true,
+        selectedPlan.recurring ? payment.is_first_recurring === true : true,
+        {
+          periodStart: selectedPlan.recurring
+            ? periodEnd - PLUS_SUBSCRIPTION_PERIOD_SECONDS
+            : periodStart,
+          requestLimit: selectedPlan.requestLimit,
+          imageLimit: selectedPlan.imageLimit,
+          durationMonths: selectedPlan.months,
+          recurring: selectedPlan.recurring,
+        },
       );
       if (!activated) {
         await ctx.reply("Этот платёж уже обработан. Подписка Plus остаётся активной.");
         return;
       }
       track(ctx.from.id, "subscription_started", "plus", {
-        stars: config.PLUS_SUBSCRIPTION_STARS,
+        stars: selectedPlan.stars,
+        duration_months: selectedPlan.months,
         period_end: periodEnd,
       });
       await ctx.reply(
         [
           "<b>Plus активирован ✅</b>",
           "",
-          `Доступно <b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b> на 30 дней.`,
-          `Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`,
+          `Доступно <b>${selectedPlan.requestLimit} AI-баллов</b> и до <b>${selectedPlan.imageLimit} картинок</b>.`,
+          selectedPlan.recurring
+            ? `Подписка действует до ${formatUnixDate(periodEnd)} и продлевается автоматически.`
+            : `Доступ оплачен до ${formatUnixDate(periodEnd)}. Автосписания нет.`,
           "",
           "Отправь фото, голос, вопрос или описание картинки — можно начинать.",
         ].join("\n"),
@@ -253,7 +273,7 @@ export function createBot(
       if (config.ADMIN_TELEGRAM_ID) {
         void ctx.api.sendMessage(
           config.ADMIN_TELEGRAM_ID,
-          `💰 Новая подписка Plus\nПолучено: ${config.PLUS_SUBSCRIPTION_STARS} Stars\nПользователь: ${ctx.from.id}`,
+          `💰 Новый Plus на ${selectedPlan.title}\nПолучено: ${selectedPlan.stars} Stars\nПользователь: ${ctx.from.id}`,
         ).catch((error) => console.error("Subscription notification failed", error));
       }
       return;
@@ -302,8 +322,8 @@ export function createBot(
         `Начислено: <b>${selected.credits} запросов</b>`,
         `Теперь доступно: <b>${access.credits}</b>`,
         "",
-        "Они подходят для вопросов, голоса и разбора фото.",
-        "Создание и изменение картинок доступно по Plus.",
+        "Баллы подходят для вопросов, голоса, разбора фото и картинок.",
+        "Новая картинка — 2 балла, изменение фото — 3 балла.",
         "",
         "Отправь следующую задачу — можно начинать.",
       ].join("\n"),
@@ -645,8 +665,10 @@ export function createBot(
         "",
         subscription.active
           ? `Активен до <b>${formatUnixDate(subscription.periodEnd!)}</b>`
-          : `<b>${config.PLUS_SUBSCRIPTION_STARS} Stars · 30 дней</b>`,
-        `<b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> · до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>`,
+          : "Выбери срок: <b>1, 3, 6 или 12 месяцев</b>.",
+        subscription.active
+          ? `<b>${subscription.requestLimit ?? config.PLUS_REQUEST_LIMIT} AI-баллов</b> · до <b>${subscription.imageLimit ?? config.PLUS_IMAGE_LIMIT} картинок</b>`
+          : "Чем дольше срок, тем больше AI-баллов и выгоднее цена.",
         ...(subscriptionRequests.active
           ? [`Осталось: <b>${subscriptionRequests.remaining}</b> из ${subscriptionRequests.limit} AI-баллов.`]
           : []),
@@ -656,12 +678,36 @@ export function createBot(
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active
-          ? [`Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}.`]
-          : ["Подписка продлевается автоматически. Её можно отключить здесь."]),
+          ? [subscription.recurring
+              ? `Автопродление: ${subscription.autoRenew ? "включено" : "выключено"}.`
+              : "Предоплаченный период без автосписания."]
+          : ["Автопродление есть только у тарифа на 1 месяц."]),
       ].join("\n"),
       subscription.active
-        ? subscriptionMenu(subscription.autoRenew)
+        ? subscriptionMenu(subscription.autoRenew, subscription.recurring)
         : tariffsMenu(),
+      "HTML",
+    );
+  });
+
+  bot.callbackQuery("menu:plus-plans", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      [
+        "<b>⭐ Выбери срок Plus</b>",
+        "",
+        formatPlusPlanLine(PLUS_PLANS["1m"]),
+        formatPlusPlanLine(PLUS_PLANS["3m"], "выгоднее"),
+        formatPlusPlanLine(PLUS_PLANS["6m"], "популярный"),
+        formatPlusPlanLine(PLUS_PLANS["12m"], "максимум выгоды"),
+        "",
+        "AI-баллы расходуются на ответы, фото, голос и картинки.",
+        "Картинка — 2 балла · изменение фото — 3 балла.",
+        "",
+        "1 месяц продлевается автоматически. Остальные сроки оплачиваются один раз.",
+      ].join("\n"),
+      plusPlansMenu(),
       "HTML",
     );
   });
@@ -673,8 +719,11 @@ export function createBot(
       [
         "<b>📦 Разовые запросы</b>",
         "",
-        "Для вопросов, голоса и разбора фото. Подписка не нужна, запросы не сгорают.",
-        "Создание и изменение картинок доступно по Plus.",
+        "Подписка не нужна, AI-баллы не сгорают.",
+        "Их можно тратить на вопросы, голос, разбор фото и картинки.",
+        "",
+        "Ответ, фото или голос — 1 балл",
+        "Новая картинка — 2 · изменение фото — 3",
       ].join("\n"),
       creditPacksMenu(),
       "HTML",
@@ -689,24 +738,45 @@ export function createBot(
 
   bot.callbackQuery("subscribe:plus", async (ctx) => {
     await ctx.answerCallbackQuery();
+    await editOrReplyMenu(ctx, "<b>⭐ Выбери срок Plus</b>", plusPlansMenu(), "HTML");
+  });
+
+  bot.callbackQuery(/^subscribe:(1m|3m|6m|12m)$/, async (ctx) => {
+    const productId = ctx.match[1];
+    if (!productId || !isPlusPlanId(productId)) {
+      await ctx.answerCallbackQuery("Неизвестный тариф");
+      return;
+    }
+    const plan = PLUS_PLANS[productId];
+    await ctx.answerCallbackQuery();
     await dismissCallbackMessage(ctx);
-    track(ctx.from.id, "subscription_invoice_created", "plus", {
-      stars: config.PLUS_SUBSCRIPTION_STARS,
+    track(ctx.from.id, "subscription_invoice_created", productId, {
+      stars: plan.stars,
+      duration_months: plan.months,
     });
     const invoiceUrl = await ctx.api.raw.createInvoiceLink({
-      title: "Пойми AI Plus",
-      description: `${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} AI-картинок на 30 дней.`,
-      payload: createSubscriptionPayload(ctx.from.id),
+      title: `Пойми AI Plus · ${plan.title}`,
+      description: `${plan.requestLimit} AI-баллов и до ${plan.imageLimit} картинок на ${plan.title}.`,
+      payload: createSubscriptionPayload(ctx.from.id, productId),
       currency: "XTR",
-      prices: [{ label: "Plus на 30 дней", amount: config.PLUS_SUBSCRIPTION_STARS }],
-      subscription_period: PLUS_SUBSCRIPTION_PERIOD_SECONDS,
+      prices: [{ label: `Plus · ${plan.title}`, amount: plan.stars }],
+      ...(plan.recurring ? { subscription_period: PLUS_SUBSCRIPTION_PERIOD_SECONDS } : {}),
     });
     await ctx.reply(
-      `Plus на 30 дней · ${config.PLUS_SUBSCRIPTION_STARS} Stars\n${config.PLUS_REQUEST_LIMIT} AI-единиц, включая до ${config.PLUS_IMAGE_LIMIT} картинок. Автопродление можно отключить в любой момент.`,
+      [
+        `<b>Plus · ${plan.title}</b>`,
+        "",
+        `<b>${plan.stars} Stars</b>`,
+        `${plan.requestLimit} AI-баллов · до ${plan.imageLimit} картинок`,
+        plan.recurring
+          ? "Автопродление каждые 30 дней можно отключить в аккаунте."
+          : "Один платёж. Автосписания нет.",
+      ].join("\n"),
       {
+        parse_mode: "HTML",
         reply_markup: new InlineKeyboard()
-          .url(`Оплатить ${config.PLUS_SUBSCRIPTION_STARS} ⭐`, invoiceUrl).row()
-          .text("← Тарифы", "menu:tariffs"),
+          .url(`Оплатить ${plan.stars} ⭐`, invoiceUrl).row()
+          .text("← Выбрать другой срок", "menu:plus-plans"),
       },
     );
   });
@@ -736,7 +806,7 @@ export function createBot(
 
   bot.callbackQuery(/^subscription:(cancel|resume)$/, async (ctx) => {
     const subscription = db.getSubscriptionAccess(ctx.from.id);
-    if (!subscription.active || !subscription.latestChargeId) {
+    if (!subscription.active || !subscription.latestChargeId || !subscription.recurring) {
       await ctx.answerCallbackQuery("Активная подписка не найдена");
       return;
     }
@@ -744,7 +814,7 @@ export function createBot(
     await ctx.api.editUserStarSubscription(ctx.from.id, subscription.latestChargeId, cancel);
     db.setSubscriptionAutoRenew(ctx.from.id, !cancel);
     await ctx.answerCallbackQuery(cancel ? "Автопродление выключено" : "Автопродление включено");
-    await ctx.editMessageReplyMarkup({ reply_markup: subscriptionMenu(!cancel) });
+    await ctx.editMessageReplyMarkup({ reply_markup: subscriptionMenu(!cancel, true) });
   });
 
   bot.callbackQuery(/^buy:(.+)$/, async (ctx) => {
@@ -762,7 +832,7 @@ export function createBot(
     await dismissCallbackMessage(ctx);
     await ctx.replyWithInvoice(
       `Пакет «${selected.title}»`,
-      `${selected.credits} запросов к Пойми AI. Запросы не сгорают.`,
+      `${selected.credits} AI-баллов для ответов, фото, голоса и картинок. Баллы не сгорают.`,
       createPaymentPayload(packageId, ctx.from.id),
       "XTR",
       [{ label: `${selected.credits} запросов`, amount: selected.stars }],
@@ -1353,22 +1423,19 @@ async function generateImageForUser(
   limits: { plus: number; pro: number; global: number; windowSeconds: number },
   track: TrackEvent,
 ): Promise<void> {
-  const allowance = db.getImageAllowance(ctx.from!.id, limits);
-  const aiReservation = allowance.tier === "plus"
-    ? db.reserveSubscriptionUnits(ctx.from!.id, 2)
-    : undefined;
-  if (allowance.tier === "plus" && !aiReservation) {
-    await ctx.reply("Месячный AI-баланс Plus закончился. Новые единицы появятся после обновления периода подписки.", {
-      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
-    });
-    return;
-  }
   const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
   if (!("id" in reservation)) {
-    if (aiReservation) db.releaseRequest(aiReservation.id);
     track(ctx.from!.id, "image_limit_shown", reservation.reason);
     await ctx.reply(imageLimitMessage(reservation), {
       reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
+    });
+    return;
+  }
+  const aiReservations = reserveImageUnits(db, ctx.from!.id, reservation.allowance.tier, 2);
+  if (!aiReservations) {
+    db.releaseImageGeneration(reservation.id);
+    await ctx.reply("Недостаточно AI-баллов для картинки. Нужно 2 балла.", {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
     });
     return;
   }
@@ -1377,7 +1444,7 @@ async function generateImageForUser(
     stopProgress = await startImageProgress(ctx, "Создаю изображение");
     const image = await ai.generateImage(prompt, ctx.from!.id);
     db.completeImageGeneration(reservation.id);
-    if (aiReservation) db.commitRequest(aiReservation.id);
+    commitReservations(db, aiReservations);
     const sent = await ctx.replyWithPhoto(new InputFile(image, "otvet-umno.png"), {
       caption: `Готово 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
       reply_markup: imageResultMenu(),
@@ -1389,7 +1456,7 @@ async function generateImageForUser(
     if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
-    if (aiReservation) db.releaseRequest(aiReservation.id);
+    releaseReservations(db, aiReservations);
     await handleError(ctx, error);
   } finally {
     await stopProgress?.();
@@ -1407,22 +1474,19 @@ async function editImageForUser(
   resourceLimiter: Semaphore,
   track: TrackEvent,
 ): Promise<void> {
-  const allowance = db.getImageAllowance(ctx.from!.id, limits);
-  const aiReservation = allowance.tier === "plus"
-    ? db.reserveSubscriptionUnits(ctx.from!.id, 3)
-    : undefined;
-  if (allowance.tier === "plus" && !aiReservation) {
-    await ctx.reply("Месячный AI-баланс Plus закончился. Новые единицы появятся после обновления периода подписки.", {
-      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
-    });
-    return;
-  }
   const reservation = db.reserveImageGeneration(ctx.from!.id, limits);
   if (!("id" in reservation)) {
-    if (aiReservation) db.releaseRequest(aiReservation.id);
     track(ctx.from!.id, "image_limit_shown", reservation.reason);
     await ctx.reply(imageLimitMessage(reservation), {
       reply_markup: new InlineKeyboard().text("⭐ Посмотреть Plus", "menu:tariffs"),
+    });
+    return;
+  }
+  const aiReservations = reserveImageUnits(db, ctx.from!.id, reservation.allowance.tier, 3);
+  if (!aiReservations) {
+    db.releaseImageGeneration(reservation.id);
+    await ctx.reply("Недостаточно AI-баллов для изменения фото. Нужно 3 балла.", {
+      reply_markup: new InlineKeyboard().text("⭐ Посмотреть баланс", "menu:tariffs"),
     });
     return;
   }
@@ -1437,7 +1501,7 @@ async function editImageForUser(
       return ai.editImage(images, prompt, ctx.from!.id);
     });
     db.completeImageGeneration(reservation.id);
-    if (aiReservation) db.commitRequest(aiReservation.id);
+    commitReservations(db, aiReservations);
     const sent = await ctx.replyWithPhoto(new InputFile(output, "otvet-umno-edit.png"), {
       caption: `Готово, изменил исходное фото 🎨\n\n${prompt.slice(0, 700)}\n\n${imageAllowanceText(reservation.allowance)}`,
       reply_markup: imageEditResultMenu(),
@@ -1451,7 +1515,7 @@ async function editImageForUser(
     delete ctx.session.visualResponseId;
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
-    if (aiReservation) db.releaseRequest(aiReservation.id);
+    releaseReservations(db, aiReservations);
     await handleError(ctx, error);
   } finally {
     await stopProgress?.();
@@ -1759,13 +1823,15 @@ function imageAllowanceText(allowance: ImageAllowance): string {
   if (allowance.tier === "free") {
     return `Картинки: ${allowance.remaining > 0 ? "1 пробная доступна" : "пробная использована"}`;
   }
-  const tier = allowance.tier === "pro" ? "команда" : "Plus";
+  const tier = allowance.tier === "pro"
+    ? "команда"
+    : allowance.tier === "credits" ? "разовый пакет" : "Plus";
   return `Картинки (${tier}): осталось ${allowance.remaining} из ${allowance.limit}`;
 }
 
 function imageLimitMessage(allowance: ImageAllowance): string {
   if (allowance.reason === "trial_used") {
-    return "Пробная картинка уже создана. С Plus доступно 20 генераций на 30 дней.";
+    return "Пробная картинка уже создана. Продолжить можно с Plus или разовым пакетом AI-баллов.";
   }
   const wait = allowance.resetAt ? formatWait(allowance.resetAt) : "чуть позже";
   if (allowance.reason === "global_limit") {
@@ -1804,16 +1870,60 @@ function formatUnixDate(timestamp: number): string {
   }).format(new Date(timestamp * 1000));
 }
 
-function subscriptionMenu(autoRenew: boolean): InlineKeyboard {
-  return new InlineKeyboard()
-    .text(
+function subscriptionMenu(autoRenew: boolean, recurring = true): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (recurring) {
+    keyboard.text(
       autoRenew ? "Отключить автопродление" : "Включить автопродление",
       autoRenew ? "subscription:cancel" : "subscription:resume",
-    ).row()
+    ).row();
+  }
+  return keyboard
     .text("❓ Как купить Stars", "stars:help").row()
-    .text("➕ Купить разовые запросы", "buy:start").row()
+    .text("➕ Купить разовые запросы", "menu:credit-packs").row()
     .text("🧾 Мои покупки", "menu:payments").row()
     .text("← В кабинет", "menu:profile");
+}
+
+function formatPlusPlanLine(
+  plan: (typeof PLUS_PLANS)[keyof typeof PLUS_PLANS],
+  badge?: string,
+): string {
+  return [
+    `<b>${plan.title} · ${plan.stars} Stars</b>${badge ? ` · ${badge}` : ""}`,
+    `${plan.requestLimit} баллов · до ${plan.imageLimit} картинок`,
+  ].join("\n");
+}
+
+function reserveImageUnits(
+  db: BotDatabase,
+  telegramId: number,
+  tier: ImageAllowance["tier"],
+  units: number,
+): string[] | undefined {
+  if (tier === "free" || tier === "pro") return [];
+  if (tier === "plus") {
+    const subscription = db.reserveSubscriptionUnits(telegramId, units);
+    if (subscription) return [subscription.id];
+  }
+  const reservations: string[] = [];
+  for (let index = 0; index < units; index += 1) {
+    const reservation = db.reserveRequest(telegramId);
+    if (!reservation) {
+      releaseReservations(db, reservations);
+      return undefined;
+    }
+    reservations.push(reservation.id);
+  }
+  return reservations;
+}
+
+function commitReservations(db: BotDatabase, reservationIds: string[]): void {
+  for (const id of reservationIds) db.commitRequest(id);
+}
+
+function releaseReservations(db: BotDatabase, reservationIds: string[]): void {
+  for (const id of reservationIds) db.releaseRequest(id);
 }
 
 function formatPaymentDate(value: string): string {

@@ -5,6 +5,7 @@ import {
   imagesMenu,
   mainMenu,
   paywallMenu,
+  plusPlansMenu,
   profileMenu,
   tariffsMenu,
   visualResultMenu,
@@ -33,7 +34,7 @@ test("images menu separates creation from editing", () => {
 
 test("paywall offers only subscription or request packs", () => {
   assert.deepEqual(paywallMenu().inline_keyboard, [
-    [{ text: "⭐ Подключить Plus", callback_data: "subscribe:plus" }],
+    [{ text: "⭐ Выбрать Plus", callback_data: "menu:plus-plans" }],
     [{ text: "📦 Купить запросы", callback_data: "menu:credit-packs" }],
   ]);
 });
@@ -61,12 +62,22 @@ test("profile avoids repeating the balance as a separate screen", () => {
 
 test("tariffs return to the account menu", () => {
   assert.deepEqual(tariffsMenu().inline_keyboard, [
-    [{ text: "⭐ Plus · 399 Stars", callback_data: "subscribe:plus" }],
+    [{ text: "⭐ Выбрать Plus", callback_data: "menu:plus-plans" }],
     [{ text: "📦 Разовые запросы", callback_data: "menu:credit-packs" }],
     [
       { text: "🧾 Покупки", callback_data: "menu:payments" },
       { text: "← Назад", callback_data: "menu:profile" },
     ],
+  ]);
+});
+
+test("Plus plans expose every supported duration", () => {
+  assert.deepEqual(plusPlansMenu().inline_keyboard, [
+    [{ text: "1 месяц · 399 ⭐", callback_data: "subscribe:1m" }],
+    [{ text: "3 месяца · 999 ⭐", callback_data: "subscribe:3m" }],
+    [{ text: "6 месяцев · 1799 ⭐", callback_data: "subscribe:6m" }],
+    [{ text: "12 месяцев · 2999 ⭐", callback_data: "subscribe:12m" }],
+    [{ text: "← К тарифам", callback_data: "menu:tariffs" }],
   ]);
 });
 

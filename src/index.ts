@@ -31,6 +31,7 @@ const database = new BotDatabase(
   databasePath,
   config.FREE_REQUEST_LIMIT,
   config.PLUS_REQUEST_LIMIT,
+  config.PLUS_IMAGE_LIMIT,
 );
 const recoveredRequests = database.recoverReservedRequests();
 if (recoveredRequests) console.log(`Возвращено зависших резервов: ${recoveredRequests}`);

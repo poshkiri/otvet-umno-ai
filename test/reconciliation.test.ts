@@ -118,3 +118,34 @@ test("Stars reconciliation restores a missed Plus subscription", async () => {
   assert.equal(db.businessStats(0).activeSubscriptions, 1);
   db.close();
 });
+
+test("Stars reconciliation restores a prepaid multi-month Plus plan", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 0);
+  const now = Math.floor(Date.now() / 1000);
+  const transaction = {
+    id: "subscription-charge-3m",
+    amount: 999,
+    date: now,
+    source: {
+      type: "user",
+      transaction_type: "invoice_payment",
+      invoice_payload: "subscription-v1:plus:3m:5002",
+      user: { id: 5002, is_bot: false, first_name: "Test" },
+    },
+  };
+  const api = {
+    getStarTransactions: async ({ offset = 0 }: { offset?: number }) => ({
+      transactions: offset === 0 ? [transaction] : [],
+    }),
+  } as unknown as Api;
+
+  assert.deepEqual(await reconcileStarTransactions(api, db), { credited: 1, refunded: 0 });
+  const access = db.getSubscriptionAccess(5002, now);
+  assert.equal(access.active, true);
+  assert.equal(access.durationMonths, 3);
+  assert.equal(access.requestLimit, 360);
+  assert.equal(access.imageLimit, 75);
+  assert.equal(access.recurring, false);
+  db.close();
+});

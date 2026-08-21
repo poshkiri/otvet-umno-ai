@@ -2,6 +2,7 @@ import type { Api } from "grammy";
 import { BotDatabase } from "./database.js";
 import {
   CREDIT_PACKAGES,
+  PLUS_PLANS,
   PLUS_SUBSCRIPTION_PERIOD_SECONDS,
   parsePaymentPayload,
   parseSubscriptionPayload,
@@ -29,6 +30,7 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusS
         const parsed = parsePaymentPayload(source.invoice_payload);
         const subscription = parseSubscriptionPayload(source.invoice_payload);
         const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
+        const selectedPlan = subscription ? PLUS_PLANS[subscription.productId] : undefined;
         if (
           parsed
           && selected
@@ -46,17 +48,26 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusS
           )) credited += 1;
         } else if (
           subscription
+          && selectedPlan
           && subscription.telegramId === source.user.id
-          && transaction.amount === plusStars
+          && transaction.amount === (selectedPlan.id === "1m" ? plusStars : selectedPlan.stars)
         ) {
           db.ensureUser(source.user.id, source.user.username, source.user.first_name);
-          const periodEnd = transaction.date + PLUS_SUBSCRIPTION_PERIOD_SECONDS;
+          const periodEnd = transaction.date + selectedPlan.months * PLUS_SUBSCRIPTION_PERIOD_SECONDS;
           if (db.recordSubscriptionPayment(
             source.user.id,
             transaction.amount,
             source.invoice_payload,
             transaction.id,
             periodEnd,
+            true,
+            {
+              periodStart: transaction.date,
+              requestLimit: selectedPlan.requestLimit,
+              imageLimit: selectedPlan.imageLimit,
+              durationMonths: selectedPlan.months,
+              recurring: selectedPlan.recurring,
+            },
           )) credited += 1;
         }
       }
