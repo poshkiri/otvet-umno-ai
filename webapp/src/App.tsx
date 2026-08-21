@@ -849,7 +849,7 @@ function MessageView({ title, text, action, onAction, onBack }: { title: string;
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className={`brand ${compact ? "compact" : ""}`}><img src="/app/poymi-logo.png" alt="" /><span>Пойми AI</span></div>;
+  return <div className={`brand ${compact ? "compact" : ""}`}><img src="/app/poymi-avatar-2026.jpg" alt="" /><span>Пойми AI</span></div>;
 }
 
 function parseResult(result: string): ResultSection[] {
