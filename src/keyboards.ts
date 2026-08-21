@@ -3,6 +3,7 @@ import type { CategoryId, FlowId } from "./types.js";
 import { CREDIT_PACKAGES, PLUS_PLANS } from "./payments.js";
 
 export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
+const PUBLIC_APP_URL = "https://poymi-ai.onrender.com/app";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
@@ -84,8 +85,18 @@ export function profileMenu(): InlineKeyboard {
     .text("⭐ Plus и запросы", "menu:tariffs").row()
     .text("🕘 История", "menu:history")
     .text("🧾 Покупки", "menu:payments").row()
+    .text("📄 Документы", "menu:documents").row()
     .url("💬 Поддержка", SUPPORT_TELEGRAM_URL).row()
     .text("🏠 Главное меню", "menu:main");
+}
+
+export function documentsMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .url("🔒 Политика конфиденциальности", `${PUBLIC_APP_URL}/privacy`).row()
+    .url("📋 Пользовательское соглашение", `${PUBLIC_APP_URL}/terms`).row()
+    .url("⭐ Тарифы и цены", `${PUBLIC_APP_URL}/tariffs`).row()
+    .url("💬 Поддержка", SUPPORT_TELEGRAM_URL).row()
+    .text("← В аккаунт", "menu:profile");
 }
 
 export function tariffsMenu(): InlineKeyboard {

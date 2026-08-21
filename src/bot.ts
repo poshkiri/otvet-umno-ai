@@ -6,6 +6,7 @@ import { BotDatabase } from "./database.js";
 import {
   categoryMenu,
   creditPacksMenu,
+  documentsMenu,
   mainMenu,
   imageResultMenu,
   imageEditResultMenu,
@@ -491,6 +492,13 @@ export function createBot(
     await ctx.reply(
       "Поддержка доступна всем пользователям, подписка не нужна. Нажми кнопку ниже и напиши нам напрямую.",
       { reply_markup: new InlineKeyboard().url("Открыть @PoymiAI_support", SUPPORT_TELEGRAM_URL) },
+    );
+  });
+
+  bot.command("documents", async (ctx) => {
+    await ctx.reply(
+      "<b>📄 Документы Пойми AI</b>\n\nВсе документы доступны без подписки и авторизации.",
+      { parse_mode: "HTML", reply_markup: documentsMenu() },
     );
   });
 
@@ -1082,6 +1090,16 @@ export function createBot(
         ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
       ].join("\n"),
       profileMenu(),
+      "HTML",
+    );
+  });
+
+  bot.callbackQuery("menu:documents", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editOrReplyMenu(
+      ctx,
+      "<b>📄 Документы Пойми AI</b>\n\nВсе документы доступны без подписки и авторизации.",
+      documentsMenu(),
       "HTML",
     );
   });

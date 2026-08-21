@@ -66,6 +66,7 @@ await configureProfile("команды", () => bot.api.setMyCommands([
   { command: "start", description: "Запустить бота" },
   { command: "menu", description: "Открыть главное меню" },
   { command: "balance", description: "Мои запросы и лимиты" },
+  { command: "documents", description: "Документы и правила" },
   { command: "paysupport", description: "Написать в поддержку" },
 ]));
 await configureProfile("кнопку меню", () => bot.api.setChatMenuButton({

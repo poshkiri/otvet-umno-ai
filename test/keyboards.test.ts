@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   creditPacksMenu,
+  documentsMenu,
   imagesMenu,
   mainMenu,
   paywallMenu,
@@ -55,8 +56,19 @@ test("profile avoids repeating the balance as a separate screen", () => {
       { text: "🕘 История", callback_data: "menu:history" },
       { text: "🧾 Покупки", callback_data: "menu:payments" },
     ],
+    [{ text: "📄 Документы", callback_data: "menu:documents" }],
     [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
     [{ text: "🏠 Главное меню", callback_data: "menu:main" }],
+  ]);
+});
+
+test("documents stay permanently accessible from the account", () => {
+  assert.deepEqual(documentsMenu().inline_keyboard, [
+    [{ text: "🔒 Политика конфиденциальности", url: "https://poymi-ai.onrender.com/app/privacy" }],
+    [{ text: "📋 Пользовательское соглашение", url: "https://poymi-ai.onrender.com/app/terms" }],
+    [{ text: "⭐ Тарифы и цены", url: "https://poymi-ai.onrender.com/app/tariffs" }],
+    [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
+    [{ text: "← В аккаунт", callback_data: "menu:profile" }],
   ]);
 });
 
