@@ -8,7 +8,7 @@ import {
   parseSubscriptionPayload,
 } from "./payments.js";
 
-export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusStars = 399): Promise<{
+export async function reconcileStarTransactions(api: Api, db: BotDatabase): Promise<{
   credited: number;
   refunded: number;
 }> {
@@ -31,6 +31,8 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusS
         const subscription = parseSubscriptionPayload(source.invoice_payload);
         const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
         const selectedPlan = subscription ? PLUS_PLANS[subscription.productId] : undefined;
+        const isLegacyPlusPayment = source.invoice_payload.split(":").length === 3
+          && transaction.amount === 299;
         if (
           parsed
           && selected
@@ -50,7 +52,7 @@ export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusS
           subscription
           && selectedPlan
           && subscription.telegramId === source.user.id
-          && transaction.amount === (selectedPlan.id === "1m" ? plusStars : selectedPlan.stars)
+          && (transaction.amount === selectedPlan.stars || isLegacyPlusPayment)
         ) {
           db.ensureUser(source.user.id, source.user.username, source.user.first_name);
           const periodEnd = transaction.date + selectedPlan.months * PLUS_SUBSCRIPTION_PERIOD_SECONDS;

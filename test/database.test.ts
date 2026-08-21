@@ -219,6 +219,8 @@ test("Plus subscription activates idempotently and can disable renewal", () => {
   assert.equal(db.setSubscriptionAutoRenew(id, false), true);
   assert.equal(db.getSubscriptionAccess(id, now).autoRenew, false);
   assert.equal(db.markSubscriptionPaymentRefunded("sub-1", now), true);
+  assert.equal(db.getSubscriptionAccess(id, now).active, true);
+  assert.equal(db.markSubscriptionPaymentRefunded("sub-renewal", now), true);
   assert.equal(db.getSubscriptionAccess(id, now).active, false);
   db.close();
 });

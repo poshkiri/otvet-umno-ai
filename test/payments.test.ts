@@ -7,6 +7,7 @@ import {
   createSubscriptionPayload,
   parsePaymentPayload,
   parseSubscriptionPayload,
+  validateSubscriptionCheckout,
 } from "../src/payments.js";
 
 test("payment payload binds a package to a Telegram user", () => {
@@ -51,4 +52,12 @@ test("payment payload rejects unknown or malformed data", () => {
   assert.equal(parsePaymentPayload("credits-v1:start:not-a-number"), undefined);
   assert.equal(parsePaymentPayload("other:start:123"), undefined);
   assert.equal(parsePaymentPayload("credits-v1:start:123:extra"), undefined);
+});
+
+test("subscription checkout rejects stale invoices while Plus is active", () => {
+  const payload = createSubscriptionPayload(12345, "12m");
+  assert.equal(validateSubscriptionCheckout(payload, 12345, "XTR", 2999, false), true);
+  assert.equal(validateSubscriptionCheckout(payload, 12345, "XTR", 2999, true), false);
+  assert.equal(validateSubscriptionCheckout(payload, 99999, "XTR", 2999, false), false);
+  assert.equal(validateSubscriptionCheckout(payload, 12345, "XTR", 399, false), false);
 });

@@ -82,3 +82,17 @@ export function parseSubscriptionPayload(payload: string): {
   ) return undefined;
   return { planId, productId, telegramId };
 }
+
+export function validateSubscriptionCheckout(
+  payload: string,
+  telegramId: number,
+  currency: string,
+  totalAmount: number,
+  hasActiveSubscription: boolean,
+): boolean {
+  const parsed = parseSubscriptionPayload(payload);
+  if (!parsed || hasActiveSubscription || parsed.telegramId !== telegramId || currency !== "XTR") {
+    return false;
+  }
+  return totalAmount === PLUS_PLANS[parsed.productId].stars;
+}

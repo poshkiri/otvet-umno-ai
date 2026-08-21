@@ -108,7 +108,7 @@ if (!botPollingEnabled) {
 }
 
 try {
-  const result = await reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS);
+  const result = await reconcileStarTransactions(bot.api, database);
   if (result.credited || result.refunded) {
     console.log(`Stars reconciled: +${result.credited} payments, ${result.refunded} refunds`);
   }
@@ -125,7 +125,7 @@ const runner = run(bot, {
 let reconciliationTask: Promise<void> | undefined;
 const scheduleReconciliation = (): void => {
   if (reconciliationTask) return;
-  reconciliationTask = reconcileStarTransactions(bot.api, database, config.PLUS_SUBSCRIPTION_STARS)
+  reconciliationTask = reconcileStarTransactions(bot.api, database)
     .then((result) => {
       if (result.credited || result.refunded) {
         console.log(`Stars reconciled: +${result.credited} payments, ${result.refunded} refunds`);

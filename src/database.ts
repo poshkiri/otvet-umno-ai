@@ -764,9 +764,13 @@ export class BotDatabase {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const payment = this.db.prepare(`
-        SELECT telegram_id, status FROM subscription_payments
+        SELECT telegram_id, status, period_end FROM subscription_payments
         WHERE telegram_payment_charge_id = ?
-      `).get(chargeId) as { telegram_id: number; status: "paid" | "refunded" } | undefined;
+      `).get(chargeId) as {
+        telegram_id: number;
+        status: "paid" | "refunded";
+        period_end: number;
+      } | undefined;
       if (!payment || payment.status !== "paid") {
         this.db.exec("ROLLBACK");
         return false;
@@ -778,8 +782,8 @@ export class BotDatabase {
       this.db.prepare(`
         UPDATE subscriptions SET period_end = MIN(period_end, ?), auto_renew = 0,
                                  updated_at = CURRENT_TIMESTAMP
-        WHERE telegram_id = ? AND latest_charge_id = ?
-      `).run(now, payment.telegram_id, chargeId);
+        WHERE telegram_id = ? AND period_end <= ?
+      `).run(now, payment.telegram_id, payment.period_end);
       this.db.exec("COMMIT");
       return true;
     } catch (error) {

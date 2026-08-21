@@ -113,7 +113,7 @@ test("Stars reconciliation restores a missed Plus subscription", async () => {
     }),
   } as unknown as Api;
 
-  assert.deepEqual(await reconcileStarTransactions(api, db, 299), { credited: 1, refunded: 0 });
+  assert.deepEqual(await reconcileStarTransactions(api, db), { credited: 1, refunded: 0 });
   assert.equal(db.getSubscriptionAccess(5001, now).active, true);
   assert.equal(db.businessStats(0).activeSubscriptions, 1);
   db.close();

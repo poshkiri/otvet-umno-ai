@@ -30,6 +30,7 @@ import {
   isPlusPlanId,
   parsePaymentPayload,
   parseSubscriptionPayload,
+  validateSubscriptionCheckout,
 } from "./payments.js";
 import {
   CATEGORY_LABELS,
@@ -182,6 +183,9 @@ export function createBot(
       const subscription = parseSubscriptionPayload(query.invoice_payload);
       const selected = parsed ? CREDIT_PACKAGES[parsed.packageId] : undefined;
       const selectedPlan = subscription ? PLUS_PLANS[subscription.productId] : undefined;
+      const hasActiveSubscription = subscription
+        ? db.getSubscriptionAccess(query.from.id).active
+        : false;
       const validCredits = Boolean(
         parsed
         && selected
@@ -189,12 +193,12 @@ export function createBot(
         && query.currency === "XTR"
         && query.total_amount === selected.stars,
       );
-      const validSubscription = Boolean(
-        subscription
-        && selectedPlan
-        && subscription.telegramId === query.from.id
-        && query.currency === "XTR"
-        && query.total_amount === selectedPlan.stars,
+      const validSubscription = validateSubscriptionCheckout(
+        query.invoice_payload,
+        query.from.id,
+        query.currency,
+        query.total_amount,
+        hasActiveSubscription,
       );
       const valid = validCredits || validSubscription;
       if (valid) {
@@ -207,7 +211,9 @@ export function createBot(
       await ctx.answerPreCheckoutQuery(
         valid,
         valid ? undefined : {
-          error_message: "Счёт устарел или повреждён. Вернись в тарифы и создай новый.",
+          error_message: hasActiveSubscription
+            ? "Plus уже активен. Дождись окончания тарифа или управляй им в аккаунте."
+            : "Счёт устарел или повреждён. Вернись в тарифы и создай новый.",
         },
       );
       return;
@@ -733,7 +739,7 @@ export function createBot(
   bot.callbackQuery("menu:paywall", async (ctx) => {
     await ctx.answerCallbackQuery();
     await clearCallbackKeyboard(ctx);
-    await replyPaywall(ctx, config.PLUS_SUBSCRIPTION_STARS);
+    await replyPaywall(ctx);
   });
 
   bot.callbackQuery("subscribe:plus", async (ctx) => {
@@ -745,6 +751,13 @@ export function createBot(
     const productId = ctx.match[1];
     if (!productId || !isPlusPlanId(productId)) {
       await ctx.answerCallbackQuery("Неизвестный тариф");
+      return;
+    }
+    if (db.getSubscriptionAccess(ctx.from.id).active) {
+      await ctx.answerCallbackQuery({
+        text: "Plus уже активен. Управлять им можно в аккаунте.",
+        show_alert: true,
+      });
       return;
     }
     const plan = PLUS_PLANS[productId];
@@ -1019,7 +1032,7 @@ export function createBot(
     if (!reservation) {
       track(ctx.from.id, "paywall_shown", "refinement");
       await ctx.answerCallbackQuery("Лимит закончился");
-      await replyPaywall(ctx, config.PLUS_SUBSCRIPTION_STARS);
+      await replyPaywall(ctx);
       return;
     }
     await ctx.answerCallbackQuery("Переделываю…");
@@ -1791,7 +1804,6 @@ async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
 
 async function replyPaywall(
   ctx: BotContext,
-  plusStars = Number(process.env.PLUS_SUBSCRIPTION_STARS ?? 399),
 ): Promise<void> {
   await ctx.reply(
     [
@@ -1799,7 +1811,7 @@ async function replyPaywall(
       "",
       "Выбери удобный способ продолжить:",
       "",
-      `⭐ <b>Plus · ${plusStars} Stars</b> — ответы и картинки на 30 дней`,
+      `⭐ <b>Plus · ${PLUS_PLANS["1m"].stars} Stars</b> — ответы и картинки на 30 дней`,
       `📦 <b>${CREDIT_PACKAGES.start.credits} запросов · ${CREDIT_PACKAGES.start.stars} Stars</b> — без подписки, не сгорают`,
     ].join("\n"),
     { parse_mode: "HTML", reply_markup: paywallMenu() },
