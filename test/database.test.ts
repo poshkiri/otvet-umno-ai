@@ -78,6 +78,82 @@ test("payment is idempotent and credits are granted once", () => {
   db.close();
 });
 
+test("admin support grants are audited and reject unknown users", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5, 100, 20);
+  const adminId = 1264985917;
+  const userId = 9001;
+  const now = 1_800_000_000;
+  db.ensureUser(userId, "buyer", "Покупатель");
+
+  assert.equal(db.adminGrantCredits(adminId, 9999, 50), false);
+  assert.equal(db.adminGrantCredits(adminId, userId, 50), true);
+  assert.equal(db.getAccess(userId).credits, 50);
+
+  assert.equal(db.adminGrantPlus(adminId, 9999, {
+    months: 3,
+    requestLimit: 360,
+    imageLimit: 75,
+  }, now), undefined);
+  const periodEnd = db.adminGrantPlus(adminId, userId, {
+    months: 3,
+    requestLimit: 360,
+    imageLimit: 75,
+  }, now);
+  assert.equal(periodEnd, now + 3 * 30 * 24 * 60 * 60);
+  const user = db.getAdminUser(userId);
+  assert.equal(user?.telegramId, userId);
+  assert.equal(user?.username, "buyer");
+  assert.equal(user?.firstName, "Покупатель");
+  assert.equal(user?.credits, 50);
+  const subscription = db.getSubscriptionAccess(userId, now);
+  assert.equal(subscription.active, true);
+  assert.equal(subscription.periodEnd, periodEnd);
+  assert.equal(subscription.periodStart, now);
+  assert.equal(subscription.requestLimit, 360);
+  assert.equal(subscription.imageLimit, 75);
+  assert.equal(subscription.durationMonths, 3);
+  assert.equal(subscription.recurring, false);
+  assert.equal(subscription.autoRenew, false);
+  assert.match(subscription.latestChargeId ?? "", /^manual:/);
+  const actions = db.recentAdminActions(userId);
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0]?.action, "grant_plus");
+  assert.equal(actions[0]?.adminTelegramId, adminId);
+  assert.equal(actions[1]?.action, "grant_credits");
+  db.close();
+});
+
+test("admin payment feed combines Stars subscriptions and external payments", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const id = 9010;
+  db.ensureUser(id);
+  db.recordPayment(id, "start", 50, 199, "credits-v1:start:9010", "stars-credit");
+  db.recordSubscriptionPayment(
+    id,
+    399,
+    "subscription-v1:plus:1m:9010",
+    "stars-plus",
+    1_900_000_000,
+  );
+  db.createExternalPayment({
+    transactionId: "11111111-1111-4111-8111-111111111111",
+    telegramId: id,
+    packageId: "start",
+    credits: 50,
+    amountRub: 199,
+    payload: "platega-v1:start:9010:nonce",
+    paymentUrl: "https://example.com/pay",
+  });
+
+  const feed = db.recentAdminPayments();
+  assert.equal(feed.length, 3);
+  assert.deepEqual(new Set(feed.map((payment) => payment.currency)), new Set(["Stars", "RUB"]));
+  assert.ok(feed.some((payment) => payment.referenceId === "stars-plus"));
+  db.close();
+});
+
 test("refund removes only unused credits from the refunded package", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 0);

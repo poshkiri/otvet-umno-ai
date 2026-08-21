@@ -45,6 +45,7 @@ export interface BotSession {
   awaitingImageEdit?: boolean;
   awaitingImageEditSource?: boolean;
   visualSources?: Array<{ fileId: string; mimeType: string }>;
+  adminAwaitingUserId?: boolean;
 }
 
 export interface UserAccess {

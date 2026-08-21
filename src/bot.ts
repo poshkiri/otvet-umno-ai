@@ -501,8 +501,10 @@ export function createBot(
       await ctx.reply("Формат: /grant TELEGRAM_ID КОЛИЧЕСТВО");
       return;
     }
-    db.ensureUser(targetId);
-    db.addCredits(targetId, amount);
+    if (!db.adminGrantCredits(ctx.from.id, targetId, amount)) {
+      await ctx.reply("Пользователь не найден. Попроси его сначала открыть бота и отправить /myid.");
+      return;
+    }
     await ctx.reply(`Готово: пользователю ${targetId} начислено ${amount} запросов.`);
   });
 
@@ -567,6 +569,168 @@ export function createBot(
     await ctx.editMessageText(formatAcquisitionReport(db.acquisitionStats()), {
       reply_markup: new InlineKeyboard().text("← К отчёту", "admin:period:30"),
     });
+  });
+
+  bot.callbackQuery("admin:user-search", async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    ctx.session.adminAwaitingUserId = true;
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      "Отправь Telegram ID пользователя одним числом. Пользователь найдёт его командой /myid.",
+      { reply_markup: new InlineKeyboard().text("Отмена", "admin:cancel-search") },
+    );
+  });
+
+  bot.callbackQuery("admin:cancel-search", async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    ctx.session.adminAwaitingUserId = false;
+    await ctx.answerCallbackQuery("Отменено");
+    await ctx.editMessageReplyMarkup();
+  });
+
+  bot.callbackQuery("admin:payments", async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(formatAdminPaymentFeed(db), {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("← В админку", "admin:period:1"),
+    });
+  });
+
+  bot.callbackQuery(/^admin:user:(\d+)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    if (!Number.isSafeInteger(telegramId)) return ctx.answerCallbackQuery("Некорректный ID");
+    const card = formatAdminUserCard(db, telegramId, config.PLUS_REQUEST_LIMIT);
+    if (!card) return ctx.answerCallbackQuery({ text: "Пользователь не найден", show_alert: true });
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(card, {
+      parse_mode: "HTML",
+      reply_markup: adminUserKeyboard(telegramId),
+    });
+  });
+
+  bot.callbackQuery(/^admin:user-payments:(\d+)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    if (!Number.isSafeInteger(telegramId)) return ctx.answerCallbackQuery("Некорректный ID");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(formatAdminUserPayments(db, telegramId), {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("← К пользователю", `admin:user:${telegramId}`),
+    });
+  });
+
+  bot.callbackQuery(/^admin:grant-(plus|credits):(\d+)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const kind = ctx.match[1];
+    const telegramId = Number(ctx.match[2]);
+    if (!db.getAdminUser(telegramId)) return ctx.answerCallbackQuery("Пользователь не найден");
+    await ctx.answerCallbackQuery();
+    const keyboard = new InlineKeyboard();
+    if (kind === "plus") {
+      for (const plan of Object.values(PLUS_PLANS)) {
+        keyboard.text(plan.title, `admin:prepare-plus:${telegramId}:${plan.id}`).row();
+      }
+    } else {
+      for (const amount of [50, 200, 500]) {
+        keyboard.text(`${amount} запросов`, `admin:prepare-credits:${telegramId}:${amount}`).row();
+      }
+    }
+    keyboard.text("← К пользователю", `admin:user:${telegramId}`);
+    await ctx.editMessageText(
+      kind === "plus" ? "На какой срок выдать Plus?" : "Сколько запросов начислить?",
+      { reply_markup: keyboard },
+    );
+  });
+
+  bot.callbackQuery(/^admin:prepare-plus:(\d+):(1m|3m|6m|12m)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    const planId = ctx.match[2];
+    if (!planId || !isPlusPlanId(planId) || !db.getAdminUser(telegramId)) {
+      return ctx.answerCallbackQuery("Данные не найдены");
+    }
+    const plan = PLUS_PLANS[planId];
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      [
+        "<b>Подтверди ручную выдачу</b>",
+        "",
+        `Пользователь: <code>${telegramId}</code>`,
+        `Plus: <b>${plan.title}</b>`,
+        `${plan.requestLimit} AI-баллов · до ${plan.imageLimit} картинок`,
+        "",
+        "Деньги эта операция не списывает. Действие попадёт в журнал.",
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard()
+          .text("✅ Выдать", `admin:confirm-plus:${telegramId}:${planId}`).row()
+          .text("Отмена", `admin:user:${telegramId}`),
+      },
+    );
+  });
+
+  bot.callbackQuery(/^admin:prepare-credits:(\d+):(50|200|500)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    const amount = Number(ctx.match[2]);
+    if (!db.getAdminUser(telegramId)) return ctx.answerCallbackQuery("Пользователь не найден");
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      [
+        "<b>Подтверди начисление</b>",
+        "",
+        `Пользователь: <code>${telegramId}</code>`,
+        `Запросы: <b>${amount}</b>`,
+        "",
+        "Деньги эта операция не списывает. Действие попадёт в журнал.",
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard()
+          .text("✅ Начислить", `admin:confirm-credits:${telegramId}:${amount}`).row()
+          .text("Отмена", `admin:user:${telegramId}`),
+      },
+    );
+  });
+
+  bot.callbackQuery(/^admin:confirm-plus:(\d+):(1m|3m|6m|12m)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    const planId = ctx.match[2];
+    if (!planId || !isPlusPlanId(planId)) return ctx.answerCallbackQuery("Неизвестный тариф");
+    const plan = PLUS_PLANS[planId];
+    const periodEnd = db.adminGrantPlus(ctx.from.id, telegramId, plan);
+    if (!periodEnd) return ctx.answerCallbackQuery({ text: "Пользователь не найден", show_alert: true });
+    await ctx.answerCallbackQuery("Plus выдан ✅");
+    await ctx.editMessageText(formatAdminUserCard(db, telegramId, config.PLUS_REQUEST_LIMIT)!, {
+      parse_mode: "HTML",
+      reply_markup: adminUserKeyboard(telegramId),
+    });
+    await ctx.api.sendMessage(
+      telegramId,
+      `Поддержка начислила Plus на ${plan.title} ✅\nДоступ активен до ${formatUnixDate(periodEnd)}.`,
+    ).catch(() => undefined);
+  });
+
+  bot.callbackQuery(/^admin:confirm-credits:(\d+):(50|200|500)$/, async (ctx) => {
+    if (ctx.from.id !== config.ADMIN_TELEGRAM_ID) return ctx.answerCallbackQuery("Нет доступа");
+    const telegramId = Number(ctx.match[1]);
+    const amount = Number(ctx.match[2]);
+    if (!db.adminGrantCredits(ctx.from.id, telegramId, amount)) {
+      return ctx.answerCallbackQuery({ text: "Пользователь не найден", show_alert: true });
+    }
+    await ctx.answerCallbackQuery("Запросы начислены ✅");
+    await ctx.editMessageText(formatAdminUserCard(db, telegramId, config.PLUS_REQUEST_LIMIT)!, {
+      parse_mode: "HTML",
+      reply_markup: adminUserKeyboard(telegramId),
+    });
+    await ctx.api.sendMessage(
+      telegramId,
+      `Поддержка начислила ${amount} запросов ✅\nОни уже доступны в твоём аккаунте.`,
+    ).catch(() => undefined);
   });
 
   bot.callbackQuery("menu:main", async (ctx) => {
@@ -1129,6 +1293,26 @@ export function createBot(
 
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
+    if (ctx.from.id === config.ADMIN_TELEGRAM_ID && ctx.session.adminAwaitingUserId) {
+      ctx.session.adminAwaitingUserId = false;
+      const telegramId = Number(ctx.message.text.trim());
+      if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
+        await ctx.reply("Не похоже на Telegram ID. Нужны только цифры, например: 1264985917.");
+        return;
+      }
+      const card = formatAdminUserCard(db, telegramId, config.PLUS_REQUEST_LIMIT);
+      if (!card) {
+        await ctx.reply("Пользователь с таким ID ещё не запускал бота.", {
+          reply_markup: new InlineKeyboard().text("🔎 Искать снова", "admin:user-search"),
+        });
+        return;
+      }
+      await ctx.reply(card, {
+        parse_mode: "HTML",
+        reply_markup: adminUserKeyboard(telegramId),
+      });
+      return;
+    }
     if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length) {
       ctx.session.awaitingImageEdit = false;
       ctx.session.awaitingImageEditSource = true;
@@ -1962,7 +2146,129 @@ function adminKeyboard(activePeriod: AnalyticsPeriodDays): InlineKeyboard {
     keyboard.text(`${marker}${period.label}`, `admin:period:${period.days}`);
     if (period.days === 7) keyboard.row();
   }
-  return keyboard.row().text("📣 Источники", "admin:sources");
+  return keyboard
+    .row().text("🔎 Пользователь", "admin:user-search")
+    .text("🧾 Платежи", "admin:payments")
+    .row().text("📣 Источники", "admin:sources");
+}
+
+function adminUserKeyboard(telegramId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🎁 Выдать Plus", `admin:grant-plus:${telegramId}`).row()
+    .text("➕ Начислить запросы", `admin:grant-credits:${telegramId}`).row()
+    .text("🧾 Оплаты и выдачи", `admin:user-payments:${telegramId}`).row()
+    .text("🔎 Другой пользователь", "admin:user-search")
+    .text("← В админку", "admin:period:1");
+}
+
+function formatAdminUserCard(
+  db: BotDatabase,
+  telegramId: number,
+  subscriptionLimit: number,
+): string | undefined {
+  const user = db.getAdminUser(telegramId);
+  if (!user) return undefined;
+  const access = db.getAccess(telegramId);
+  const subscription = db.getSubscriptionAccess(telegramId);
+  const allowance = db.getSubscriptionRequestAllowance(telegramId, subscriptionLimit);
+  const actions = db.recentAdminActions(telegramId, 3);
+  const identity = [
+    user.firstName ? escapeTelegramHtml(user.firstName) : undefined,
+    user.username ? `@${escapeTelegramHtml(user.username)}` : undefined,
+  ].filter(Boolean).join(" · ") || "имя не сохранено";
+  const actionLines = actions.map((action) => {
+    const label = action.action === "grant_plus"
+      ? `Plus на ${action.amount} мес.`
+      : `${action.amount} запросов`;
+    return `• ${label} · ${formatPaymentDate(action.createdAt)}`;
+  });
+  return [
+    "<b>👤 Пользователь</b>",
+    "",
+    identity,
+    `ID: <code>${user.telegramId}</code>`,
+    `Первый вход: ${formatPaymentDate(user.createdAt)}`,
+    "",
+    `<b>Доступ</b>`,
+    `План: ${access.plan === "pro" ? "команда · безлимит" : subscription.active ? "Plus" : "обычный"}`,
+    `Бесплатных использовано: ${access.freeUsed} из ${access.freeLimit}`,
+    `Купленных запросов: ${access.credits}`,
+    ...(subscription.active ? [
+      `Plus до: <b>${formatUnixDate(subscription.periodEnd!)}</b>`,
+      `AI-баллы: ${allowance.remaining} из ${allowance.limit}`,
+      `Картинки: до ${subscription.imageLimit ?? 0}`,
+      `Автопродление: ${subscription.recurring && subscription.autoRenew ? "включено" : "нет"}`,
+    ] : ["Plus: не активен"]),
+    ...(actionLines.length ? ["", "<b>Последние ручные выдачи</b>", ...actionLines] : []),
+  ].join("\n");
+}
+
+function formatAdminPaymentFeed(db: BotDatabase): string {
+  const payments = db.recentAdminPayments(10);
+  if (!payments.length) return "<b>🧾 Последние платежи</b>\n\nПлатежей пока нет.";
+  return [
+    "<b>🧾 Последние платежи</b>",
+    "",
+    ...payments.flatMap((payment, index) => [
+      `<b>${index + 1}. ${escapeTelegramHtml(payment.product)}</b> · ${payment.amount} ${payment.currency}`,
+      `ID пользователя: <code>${payment.telegramId}</code>`,
+      `Статус: ${escapeTelegramHtml(payment.status)} · ${formatPaymentDate(payment.createdAt)}`,
+      `ID платежа: <code>${escapeTelegramHtml(payment.referenceId)}</code>`,
+      "",
+    ]),
+  ].join("\n");
+}
+
+function formatAdminUserPayments(db: BotDatabase, telegramId: number): string {
+  const stars = [
+    ...db.recentSubscriptionPayments(telegramId, 10).map((payment) => ({
+      label: "Plus",
+      amount: `${payment.stars} Stars`,
+      status: payment.status,
+      referenceId: payment.chargeId,
+      createdAt: payment.createdAt,
+    })),
+    ...db.recentPayments(telegramId, 10).map((payment) => ({
+      label: payment.packageId,
+      amount: `${payment.stars} Stars`,
+      status: payment.status,
+      referenceId: payment.chargeId,
+      createdAt: payment.createdAt,
+    })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+  const external = db.recentExternalPayments(telegramId, 10).map((payment) => ({
+    label: payment.packageId,
+    amount: `${payment.amountRub} RUB`,
+    status: payment.status,
+    referenceId: payment.transactionId,
+    createdAt: payment.createdAt,
+  }));
+  const actions = db.recentAdminActions(telegramId, 6);
+  if (!stars.length && !external.length && !actions.length) {
+    return `<b>🧾 Оплаты пользователя</b>\n\nID: <code>${telegramId}</code>\nПлатежей и ручных выдач пока нет.`;
+  }
+  const paymentLines = [...stars, ...external]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 8)
+    .flatMap((payment) => [
+      `<b>${escapeTelegramHtml(payment.label)}</b> · ${payment.amount}`,
+      `${escapeTelegramHtml(payment.status)} · ${formatPaymentDate(payment.createdAt)}`,
+      `<code>${escapeTelegramHtml(payment.referenceId)}</code>`,
+      "",
+    ]);
+  const actionLines = actions.map((action) => [
+    action.action === "grant_plus"
+      ? `Plus на ${action.amount} мес.`
+      : `${action.amount} запросов`,
+    `Администратор: <code>${action.adminTelegramId}</code> · ${formatPaymentDate(action.createdAt)}`,
+  ].join("\n"));
+  return [
+    "<b>🧾 Оплаты и ручные выдачи</b>",
+    `Пользователь: <code>${telegramId}</code>`,
+    "",
+    ...(paymentLines.length ? ["<b>Платежи</b>", ...paymentLines] : []),
+    ...(actionLines.length ? ["<b>Ручные выдачи</b>", ...actionLines] : []),
+  ].join("\n");
 }
 
 function sanitizeStartSource(value: unknown): string {

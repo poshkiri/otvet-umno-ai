@@ -206,6 +206,17 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
       );
 
+      CREATE TABLE IF NOT EXISTS admin_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_telegram_id INTEGER NOT NULL,
+        target_telegram_id INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('grant_credits', 'grant_plus')),
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        note TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (target_telegram_id) REFERENCES users(telegram_id) ON DELETE RESTRICT
+      );
+
       CREATE INDEX IF NOT EXISTS generations_user_date
       ON generations(telegram_id, created_at DESC);
 
@@ -232,6 +243,9 @@ export class BotDatabase {
 
       CREATE INDEX IF NOT EXISTS external_payments_user_date
       ON external_payments(telegram_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS admin_actions_target_date
+      ON admin_actions(target_telegram_id, created_at DESC);
 
       INSERT OR IGNORE INTO user_acquisition (telegram_id, source)
       SELECT telegram_id, 'legacy' FROM users;
@@ -948,6 +962,198 @@ export class BotDatabase {
     this.db.prepare(
       "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
     ).run(amount, telegramId);
+  }
+
+  getAdminUser(telegramId: number): {
+    telegramId: number;
+    username?: string | undefined;
+    firstName?: string | undefined;
+    freeUsed: number;
+    credits: number;
+    plan: string;
+    createdAt: string;
+  } | undefined {
+    const row = this.db.prepare(`
+      SELECT telegram_id, username, first_name, free_used, credits, plan, created_at
+      FROM users WHERE telegram_id = ?
+    `).get(telegramId) as {
+      telegram_id: number;
+      username: string | null;
+      first_name: string | null;
+      free_used: number;
+      credits: number;
+      plan: string;
+      created_at: string;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      telegramId: row.telegram_id,
+      username: row.username ?? undefined,
+      firstName: row.first_name ?? undefined,
+      freeUsed: row.free_used,
+      credits: row.credits,
+      plan: row.plan,
+      createdAt: row.created_at,
+    };
+  }
+
+  adminGrantCredits(adminTelegramId: number, targetTelegramId: number, amount: number): boolean {
+    if (!Number.isSafeInteger(amount) || amount <= 0) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const updated = this.db.prepare(`
+        UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP
+        WHERE telegram_id = ?
+      `).run(amount, targetTelegramId);
+      if (updated.changes === 0) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.prepare(`
+        INSERT INTO admin_actions (
+          admin_telegram_id, target_telegram_id, action, amount, note
+        ) VALUES (?, ?, 'grant_credits', ?, 'support_manual')
+      `).run(adminTelegramId, targetTelegramId, amount);
+      this.db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  adminGrantPlus(
+    adminTelegramId: number,
+    targetTelegramId: number,
+    options: { months: number; requestLimit: number; imageLimit: number },
+    now = Math.floor(Date.now() / 1000),
+  ): number | undefined {
+    if (
+      !Number.isSafeInteger(options.months) || options.months <= 0
+      || !Number.isSafeInteger(options.requestLimit) || options.requestLimit <= 0
+      || !Number.isSafeInteger(options.imageLimit) || options.imageLimit <= 0
+    ) return undefined;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const user = this.db.prepare(
+        "SELECT telegram_id FROM users WHERE telegram_id = ?",
+      ).get(targetTelegramId);
+      if (!user) {
+        this.db.exec("ROLLBACK");
+        return undefined;
+      }
+      const current = this.db.prepare(
+        "SELECT period_end FROM subscriptions WHERE telegram_id = ?",
+      ).get(targetTelegramId) as { period_end: number } | undefined;
+      const base = Math.max(now, current?.period_end ?? now);
+      const periodEnd = base + options.months * 30 * 24 * 60 * 60;
+      const manualId = `manual:${randomUUID()}`;
+      this.db.prepare(`
+        INSERT INTO subscriptions (
+          telegram_id, plan_id, latest_charge_id, period_start, period_end,
+          request_limit, image_limit, duration_months, recurring, auto_renew
+        ) VALUES (?, 'plus', ?, ?, ?, ?, ?, ?, 0, 0)
+        ON CONFLICT(telegram_id) DO UPDATE SET
+          plan_id = 'plus', latest_charge_id = excluded.latest_charge_id,
+          period_start = excluded.period_start, period_end = excluded.period_end,
+          request_limit = excluded.request_limit, image_limit = excluded.image_limit,
+          duration_months = excluded.duration_months, recurring = 0, auto_renew = 0,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        targetTelegramId,
+        manualId,
+        now,
+        periodEnd,
+        options.requestLimit,
+        options.imageLimit,
+        options.months,
+      );
+      this.db.prepare(`
+        INSERT INTO admin_actions (
+          admin_telegram_id, target_telegram_id, action, amount, note
+        ) VALUES (?, ?, 'grant_plus', ?, ?)
+      `).run(
+        adminTelegramId,
+        targetTelegramId,
+        options.months,
+        `${options.requestLimit} requests; ${options.imageLimit} images`,
+      );
+      this.db.exec("COMMIT");
+      return periodEnd;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recentAdminActions(telegramId: number, limit = 10): Array<{
+    adminTelegramId: number;
+    action: "grant_credits" | "grant_plus";
+    amount: number;
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT admin_telegram_id, action, amount, created_at FROM admin_actions
+      WHERE target_telegram_id = ? ORDER BY id DESC LIMIT ?
+    `).all(telegramId, limit) as Array<{
+      admin_telegram_id: number;
+      action: "grant_credits" | "grant_plus";
+      amount: number;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      adminTelegramId: row.admin_telegram_id,
+      action: row.action,
+      amount: row.amount,
+      createdAt: row.created_at,
+    }));
+  }
+
+  recentAdminPayments(limit = 15): Array<{
+    telegramId: number;
+    referenceId: string;
+    product: string;
+    amount: number;
+    currency: "Stars" | "RUB";
+    status: string;
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT telegram_id, reference_id, product, amount, currency, status, created_at
+      FROM (
+        SELECT telegram_id, telegram_payment_charge_id AS reference_id,
+               package_id AS product, stars AS amount, 'Stars' AS currency,
+               status, created_at
+        FROM payments
+        UNION ALL
+        SELECT telegram_id, telegram_payment_charge_id AS reference_id,
+               'plus' AS product, stars AS amount, 'Stars' AS currency,
+               status, created_at
+        FROM subscription_payments
+        UNION ALL
+        SELECT telegram_id, transaction_id AS reference_id,
+               package_id AS product, amount_rub AS amount, 'RUB' AS currency,
+               status, created_at
+        FROM external_payments
+      ) ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Array<{
+      telegram_id: number;
+      reference_id: string;
+      product: string;
+      amount: number;
+      currency: "Stars" | "RUB";
+      status: string;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      telegramId: row.telegram_id,
+      referenceId: row.reference_id,
+      product: row.product,
+      amount: row.amount,
+      currency: row.currency,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
   }
 
   recordPayment(
