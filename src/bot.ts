@@ -1727,7 +1727,7 @@ async function clearCallbackKeyboard(ctx: BotContext): Promise<void> {
 
 async function replyPaywall(
   ctx: BotContext,
-  plusStars = Number(process.env.PLUS_SUBSCRIPTION_STARS ?? 299),
+  plusStars = Number(process.env.PLUS_SUBSCRIPTION_STARS ?? 399),
 ): Promise<void> {
   await ctx.reply(
     [

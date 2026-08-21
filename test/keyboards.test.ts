@@ -40,9 +40,9 @@ test("paywall offers only subscription or request packs", () => {
 
 test("credit packs stay on a separate screen", () => {
   assert.deepEqual(creditPacksMenu().inline_keyboard, [
-    [{ text: "50 запросов · 149 ⭐", callback_data: "buy:start" }],
-    [{ text: "200 запросов · 549 ⭐", callback_data: "buy:plus" }],
-    [{ text: "500 запросов · 1299 ⭐", callback_data: "buy:pro" }],
+    [{ text: "50 запросов · 199 ⭐", callback_data: "buy:start" }],
+    [{ text: "200 запросов · 699 ⭐", callback_data: "buy:plus" }],
+    [{ text: "500 запросов · 1599 ⭐", callback_data: "buy:pro" }],
     [{ text: "← К тарифам", callback_data: "menu:tariffs" }],
   ]);
 });
@@ -61,7 +61,7 @@ test("profile avoids repeating the balance as a separate screen", () => {
 
 test("tariffs return to the account menu", () => {
   assert.deepEqual(tariffsMenu().inline_keyboard, [
-    [{ text: "⭐ Plus · 299 Stars", callback_data: "subscribe:plus" }],
+    [{ text: "⭐ Plus · 399 Stars", callback_data: "subscribe:plus" }],
     [{ text: "📦 Разовые запросы", callback_data: "menu:credit-packs" }],
     [
       { text: "🧾 Покупки", callback_data: "menu:payments" },

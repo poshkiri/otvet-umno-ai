@@ -194,12 +194,12 @@ const INFO_PAGES: Record<InfoPageId, InfoPageContent> = {
         bullets: ["5 AI-запросов после первого запуска.", "1 пробное создание изображения."],
       },
       {
-        title: "Plus — 299 Stars на 30 дней",
-        bullets: ["50 AI-единиц.", "До 20 созданий или изменений изображений.", "Продление можно отключить в Telegram."],
+        title: "Plus — 399 Stars на 30 дней",
+        bullets: ["100 AI-единиц.", "До 20 созданий или изменений изображений.", "Продление можно отключить в Telegram."],
       },
       {
         title: "Разовые пакеты в Telegram",
-        bullets: ["50 запросов — 149 Stars.", "200 запросов — 549 Stars.", "500 запросов — 1299 Stars."],
+        bullets: ["50 запросов — 199 Stars.", "200 запросов — 699 Stars.", "500 запросов — 1599 Stars."],
       },
       {
         title: "Как списываются запросы",
@@ -698,7 +698,7 @@ function ProfileView({ session, busy, notice, onHome, onHistory, onStars, onBuy,
               ))}
             </div>
           ) : (
-            <div className="stars-offer"><div><strong>Plus на 30 дней</strong><span>50 AI-запросов и до 20 изображений</span></div><button type="button" onClick={onStars}>Выбрать в Telegram</button></div>
+            <div className="stars-offer"><div><strong>Plus на 30 дней</strong><span>100 AI-запросов и до 20 изображений</span></div><button type="button" onClick={onStars}>Выбрать в Telegram</button></div>
           )}
           {notice && <p className="payment-notice">{notice}</p>}
           {hasPending && <button className="check-payment" type="button" disabled={Boolean(busy)} onClick={onCheck}>Проверить оплату</button>}

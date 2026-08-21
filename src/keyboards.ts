@@ -90,7 +90,7 @@ export function profileMenu(): InlineKeyboard {
 
 export function tariffsMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Plus · 299 Stars", "subscribe:plus").row()
+    .text("⭐ Plus · 399 Stars", "subscribe:plus").row()
     .text("📦 Разовые запросы", "menu:credit-packs").row()
     .text("🧾 Покупки", "menu:payments")
     .text("← Назад", "menu:profile");

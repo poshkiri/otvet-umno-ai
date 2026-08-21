@@ -34,9 +34,9 @@ services:
       - key: UNLIMITED_TELEGRAM_IDS
         value: "1264985917"
       - key: PLUS_SUBSCRIPTION_STARS
-        value: "299"
+        value: "399"
       - key: PLUS_REQUEST_LIMIT
-        value: "50"
+        value: "100"
       - key: PLUS_IMAGE_LIMIT
         value: "20"
       - key: PRO_IMAGE_LIMIT

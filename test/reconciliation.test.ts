@@ -12,7 +12,7 @@ test("Stars reconciliation restores a missed payment idempotently", async () => 
   const db = new BotDatabase(join(directory, "test.db"), 0);
   const transaction = {
     id: "telegram-charge-1",
-    amount: 149,
+    amount: 199,
     date: 1,
     source: {
       type: "user",
@@ -65,7 +65,7 @@ test("Stars reconciliation paginates beyond 100 transactions", async () => {
   const db = new BotDatabase(join(directory, "test.db"), 0);
   const transactions = Array.from({ length: 101 }, (_, index) => ({
     id: `charge-${index}`,
-    amount: 149,
+    amount: 199,
     date: index + 1,
     source: {
       type: "user" as const,

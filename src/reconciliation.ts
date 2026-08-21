@@ -7,7 +7,7 @@ import {
   parseSubscriptionPayload,
 } from "./payments.js";
 
-export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusStars = 299): Promise<{
+export async function reconcileStarTransactions(api: Api, db: BotDatabase, plusStars = 399): Promise<{
   credited: number;
   refunded: number;
 }> {
