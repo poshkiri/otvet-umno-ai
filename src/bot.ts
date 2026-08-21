@@ -396,9 +396,9 @@ export function createBot(
     delete ctx.session.visualSources;
     await ctx.reply(
       [
-        "<b>Чем помочь?</b>",
+        "<b>Что хочешь сделать?</b>",
         "",
-        "Выбери раздел. Обычный вопрос можно просто написать без выбора.",
+        "Можно выбрать действие или сразу отправить вопрос, фото, голосовое либо PDF.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: mainMenu() },
     );
@@ -554,9 +554,9 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "<b>Чем помочь?</b>",
+        "<b>Что хочешь сделать?</b>",
         "",
-        "Выбери раздел. Обычный вопрос можно просто написать без выбора.",
+        "Можно выбрать действие или сразу отправить вопрос, фото, голосовое либо PDF.",
       ].join("\n"),
       mainMenu(),
       "HTML",
@@ -570,19 +570,10 @@ export function createBot(
     ctx.session.awaitingImageEditSource = false;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
-    await ctx.answerCallbackQuery();
-    await editOrReplyMenu(
-      ctx,
-      [
-        "<b>💬 Чат</b>",
-        "",
-        "Напиши вопрос или отправь голосовое.",
-        "",
-        "Могу объяснить тему, решить задачу, написать или проверить текст, перевести и помочь составить план.",
-      ].join("\n"),
-      new InlineKeyboard().text("← Назад", "menu:main"),
-      "HTML",
-    );
+    await ctx.answerCallbackQuery({
+      text: "Напиши вопрос или отправь голосовое",
+      show_alert: false,
+    });
   });
 
   bot.callbackQuery("menu:analyze", async (ctx) => {
@@ -592,19 +583,10 @@ export function createBot(
     ctx.session.awaitingImageEditSource = false;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
-    await ctx.answerCallbackQuery();
-    await editOrReplyMenu(
-      ctx,
-      [
-        "<b>🔍 Разобрать</b>",
-        "",
-        "Отправь фотографию, скриншот или PDF.",
-        "",
-        "Я распознаю товар, этикетку, документ, ошибку или учебную задачу и объясню простыми словами.",
-      ].join("\n"),
-      new InlineKeyboard().text("← Назад", "menu:main"),
-      "HTML",
-    );
+    await ctx.answerCallbackQuery({
+      text: "Отправь фото, скриншот или PDF",
+      show_alert: false,
+    });
   });
 
   bot.callbackQuery("menu:images", async (ctx) => {
@@ -615,7 +597,7 @@ export function createBot(
     await ctx.answerCallbackQuery();
     await editOrReplyMenu(
       ctx,
-      "<b>🎨 Картинки</b>\n\nСоздай новое изображение или измени свою фотографию.",
+      "<b>🎨 Картинки</b>\n\nЧто сделать?",
       imagesMenu(),
       "HTML",
     );
@@ -659,18 +641,18 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "<b>⭐ Plus</b>",
+        "<b>⭐ Plus и запросы</b>",
         "",
         subscription.active
           ? `Активен до <b>${formatUnixDate(subscription.periodEnd!)}</b>`
-          : `<b>${config.PLUS_SUBSCRIPTION_STARS} Stars</b> на 30 дней`,
-        `<b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> и до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>.`,
+          : `<b>${config.PLUS_SUBSCRIPTION_STARS} Stars · 30 дней</b>`,
+        `<b>${config.PLUS_REQUEST_LIMIT} AI-баллов</b> · до <b>${config.PLUS_IMAGE_LIMIT} картинок</b>`,
         ...(subscriptionRequests.active
           ? [`Осталось: <b>${subscriptionRequests.remaining}</b> из ${subscriptionRequests.limit} AI-баллов.`]
           : []),
         "",
-        "Ответ, фото, PDF или голос — 1 балл",
-        "Картинка — 2 · изменение фото — 3",
+        "Ответ, фото, PDF, голос — 1 балл",
+        "Новая картинка — 2 · изменение фото — 3",
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active
@@ -824,7 +806,7 @@ export function createBot(
     await editOrReplyMenu(
       ctx,
       [
-        "<b>👤 Твой аккаунт</b>",
+        "<b>👤 Аккаунт</b>",
         "",
         userTariffStatus(access.freeUsed, access.freeLimit, access.credits, access.plan),
         ...(subscription.active ? [`Plus активен до ${formatUnixDate(subscription.periodEnd!)}`] : []),
@@ -1642,8 +1624,7 @@ async function replyResult(ctx: BotContext, result: string): Promise<void> {
 }
 
 async function replyVisualResult(ctx: BotContext, result: string): Promise<void> {
-  const text = `${result}\n\nМожешь задать вопрос по этой фотографии, отправить новую или изменить её кнопкой ниже.`;
-  const chunks = splitLongMessage(text);
+  const chunks = splitLongMessage(result);
   for (let index = 0; index < chunks.length; index += 1) {
     await ctx.reply(
       chunks[index]!,

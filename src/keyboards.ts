@@ -6,17 +6,17 @@ export const SUPPORT_TELEGRAM_URL = "https://t.me/PoymiAI_support";
 
 export function mainMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💬 Чат", "menu:chat")
-    .text("🔍 Разобрать", "menu:analyze").row()
+    .text("💬 Спросить", "menu:chat")
+    .text("📷 Разобрать", "menu:analyze").row()
     .text("🎨 Картинки", "menu:images")
     .text("👤 Аккаунт", "menu:profile");
 }
 
 export function imagesMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✨ Создать новую", "image:create").row()
-    .text("🪄 Изменить мою", "image:edit-new").row()
-    .text("← Назад", "menu:main");
+    .text("✨ Создать картинку", "image:create").row()
+    .text("🪄 Изменить фото", "image:edit-new").row()
+    .text("🏠 Главное меню", "menu:main");
 }
 
 export function paywallMenu(): InlineKeyboard {
@@ -81,11 +81,11 @@ export function refinementsMenu(): InlineKeyboard {
 
 export function profileMenu(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("⭐ Тарифы", "menu:tariffs").row()
+    .text("⭐ Plus и запросы", "menu:tariffs").row()
     .text("🕘 История", "menu:history")
     .text("🧾 Покупки", "menu:payments").row()
     .url("💬 Поддержка", SUPPORT_TELEGRAM_URL).row()
-    .text("← Назад", "menu:main");
+    .text("🏠 Главное меню", "menu:main");
 }
 
 export function tariffsMenu(): InlineKeyboard {

@@ -13,8 +13,8 @@ import {
 test("main menu keeps the primary actions simple", () => {
   assert.deepEqual(mainMenu().inline_keyboard, [
     [
-      { text: "💬 Чат", callback_data: "menu:chat" },
-      { text: "🔍 Разобрать", callback_data: "menu:analyze" },
+      { text: "💬 Спросить", callback_data: "menu:chat" },
+      { text: "📷 Разобрать", callback_data: "menu:analyze" },
     ],
     [
       { text: "🎨 Картинки", callback_data: "menu:images" },
@@ -25,9 +25,9 @@ test("main menu keeps the primary actions simple", () => {
 
 test("images menu separates creation from editing", () => {
   assert.deepEqual(imagesMenu().inline_keyboard, [
-    [{ text: "✨ Создать новую", callback_data: "image:create" }],
-    [{ text: "🪄 Изменить мою", callback_data: "image:edit-new" }],
-    [{ text: "← Назад", callback_data: "menu:main" }],
+    [{ text: "✨ Создать картинку", callback_data: "image:create" }],
+    [{ text: "🪄 Изменить фото", callback_data: "image:edit-new" }],
+    [{ text: "🏠 Главное меню", callback_data: "menu:main" }],
   ]);
 });
 
@@ -49,13 +49,13 @@ test("credit packs stay on a separate screen", () => {
 
 test("profile avoids repeating the balance as a separate screen", () => {
   assert.deepEqual(profileMenu().inline_keyboard, [
-    [{ text: "⭐ Тарифы", callback_data: "menu:tariffs" }],
+    [{ text: "⭐ Plus и запросы", callback_data: "menu:tariffs" }],
     [
       { text: "🕘 История", callback_data: "menu:history" },
       { text: "🧾 Покупки", callback_data: "menu:payments" },
     ],
     [{ text: "💬 Поддержка", url: "https://t.me/PoymiAI_support" }],
-    [{ text: "← Назад", callback_data: "menu:main" }],
+    [{ text: "🏠 Главное меню", callback_data: "menu:main" }],
   ]);
 });
 
