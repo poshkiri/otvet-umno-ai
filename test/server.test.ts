@@ -55,6 +55,27 @@ function config(): AppConfig {
   };
 }
 
+test("public app entry redirects to the Telegram bot", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "poymi-public-entry-"));
+  const db = new BotDatabase(join(directory, "test.db"), 5);
+  const app = createAppServer(
+    config(),
+    db,
+    {} as AiService,
+    { capture: () => undefined } as unknown as ProductAnalytics,
+    "OtvetUmnoAI_bot",
+  );
+
+  for (const url of ["/app", "/app/"]) {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 302);
+    assert.equal(response.headers.location, "https://t.me/OtvetUmnoAI_bot");
+  }
+
+  await app.close();
+  db.close();
+});
+
 test("Mini App API requires Telegram auth and isolates follow-up conversations", async () => {
   const directory = mkdtempSync(join(tmpdir(), "poymi-api-"));
   const db = new BotDatabase(join(directory, "test.db"), 5);

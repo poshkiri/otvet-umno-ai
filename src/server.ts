@@ -56,14 +56,20 @@ export function createAppServer(
   app.register(multipart, {
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 2 },
   });
+  app.get("/app", async (_request, reply) => reply.redirect(`https://t.me/${botUsername}`));
+  app.get("/app/", async (_request, reply) => reply.redirect(`https://t.me/${botUsername}`));
   if (existsSync(webRoot)) {
     app.register(fastifyStatic, {
       root: webRoot,
       prefix: "/app/",
       wildcard: false,
+      index: false,
     });
-    app.get("/app", async (_request, reply) => reply.redirect("/app/"));
-    app.get("/app/*", async (_request, reply) => reply.sendFile("index.html"));
+    app.get<{ Params: { "*": string } }>("/app/*", async (request, reply) => {
+      const page = request.params["*"].replace(/\/+$/, "");
+      if (!["privacy", "terms", "tariffs", "support"].includes(page)) return reply.code(404).send();
+      return reply.sendFile("index.html");
+    });
   }
 
   const authenticate = (request: FastifyRequest): TelegramWebAppUser => {
