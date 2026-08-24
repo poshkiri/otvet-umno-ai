@@ -1393,6 +1393,15 @@ export function createBot(
       await generateImageForUser(ctx, db, ai, imagePrompt, imageLimits, track);
       return;
     }
+    const directEditPrompt = extractImageEditPrompt(ctx.message.text);
+    if (directEditPrompt && ctx.session.visualSources?.length) {
+      delete ctx.session.visualResponseId;
+      await editImageForUser(
+        ctx, config, db, ai, ctx.session.visualSources, directEditPrompt,
+        imageLimits, resourceLimiter, track,
+      );
+      return;
+    }
     if (ctx.session.visualResponseId) {
       await continueVisualConversation(ctx, db, ai, ctx.message.text, track);
       return;
@@ -1825,6 +1834,7 @@ async function processVisualItems(
     return;
   }
   const caption = items.find((item) => item.caption?.trim())?.caption;
+  const captionEditPrompt = caption ? extractImageEditPrompt(caption) : undefined;
   if (ctx.session.awaitingImageEditSource) {
     ctx.session.awaitingImageEditSource = false;
     ctx.session.visualSources = items.map((item) => ({
@@ -1854,6 +1864,29 @@ async function processVisualItems(
     await ctx.reply("Фото получил. Теперь напиши, что именно изменить.", {
       reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
     });
+    return;
+  }
+  if (captionEditPrompt) {
+    ctx.session.visualSources = items.map((item) => ({
+      fileId: item.fileId,
+      mimeType: item.mimeType,
+    }));
+    await editImageForUser(
+      ctx,
+      config,
+      db,
+      ai,
+      ctx.session.visualSources,
+      captionEditPrompt,
+      {
+        plus: config.PLUS_IMAGE_LIMIT,
+        pro: config.PRO_IMAGE_LIMIT,
+        global: config.GLOBAL_IMAGE_LIMIT,
+        windowSeconds: config.IMAGE_WINDOW_HOURS * 60 * 60,
+      },
+      resourceLimiter,
+      track,
+    );
     return;
   }
   const reservation = await reserveForUser(ctx, db, track);
@@ -2127,9 +2160,12 @@ function extractImagePrompt(text: string, awaiting: boolean | undefined): string
 export function extractImageEditPrompt(text: string): string | undefined {
   const value = text.trim();
   if (!value) return undefined;
-  const editIntent = /^(?:пожалуйста[, ]+)?(?:сделай|сделать|преврати|превратить|измени|изменить|обработай|обработать|стилизуй|стилизовать|перерисуй|перерисовать|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить)(?:\s|$)/iu;
+  const directEditIntent = /^(?:пожалуйста[, ]+)?(?:преврати|превратить|измени|изменить|обработай|обработать|стилизуй|стилизовать|перерисуй|перерисовать|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить|наложи|наложить|вставь|вставить)(?:\s|$)/iu;
   const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
-  return editIntent.test(value) || styleIntent.test(value) ? value : undefined;
+  const carefulMakeIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:(?:это|эту|данное|мо[её]|исходн(?:ое|ую))\s+)?(?:фото|фотографи(?:ю|и)|картин(?:ку|ка)|изображение|фон|лицо|меня|его|её|ее|нас|предмет|товар|объект)(?:\s|$)/iu;
+  return directEditIntent.test(value) || styleIntent.test(value) || carefulMakeIntent.test(value)
+    ? value
+    : undefined;
 }
 
 function formatWait(resetAt: number): string {
