@@ -79,6 +79,8 @@ test("image creation and editing include safety rules", () => {
   assert.match(generation, /уютный дом у озера/);
   assert.match(edit, /добавь деньги на стол/);
   assert.match(edit, /точечное редактирование исходной фотографии/);
+  assert.match(edit, /которые пользователь прямо попросил изменить или убрать/);
+  assert.match(edit, /если пользователь прямо не попросил это сделать/);
   assert.match(edit, /всё вокруг оставь как на оригинале/);
   assert.match(generation, /Правила безопасности/);
   assert.match(edit, /Правила безопасности/);
