@@ -71,12 +71,16 @@ test("all assistant modes share the same safety boundaries", () => {
 test("general assistant does not pretend to verify current information", () => {
   assert.match(GENERAL_ASSISTANT_PROMPT, /нет доступа к интернету в реальном времени/);
   assert.match(GENERAL_ASSISTANT_PROMPT, /не выдавай память за проверенный факт/);
+  assert.match(GENERAL_ASSISTANT_PROMPT, /Сначала определи намерение пользователя/);
+  assert.match(GENERAL_ASSISTANT_PROMPT, /явно недоволен результатом/);
 });
 
 test("image creation and editing include safety rules", () => {
   const generation = buildImageGenerationPrompt("уютный дом у озера");
   const edit = buildImageEditPrompt("добавь деньги на стол");
   assert.match(generation, /уютный дом у озера/);
+  assert.match(generation, /буквально пойми/);
+  assert.match(generation, /Если деталей мало/);
   assert.match(edit, /добавь деньги на стол/);
   assert.match(edit, /точечное редактирование исходной фотографии/);
   assert.match(edit, /которые пользователь прямо попросил изменить или убрать/);

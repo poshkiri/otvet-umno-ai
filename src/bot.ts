@@ -420,6 +420,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.reply(
@@ -757,6 +758,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.answerCallbackQuery();
@@ -777,6 +779,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.answerCallbackQuery({
@@ -790,6 +793,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.answerCallbackQuery({
@@ -803,6 +807,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     await ctx.answerCallbackQuery();
     await editOrReplyMenu(
       ctx,
@@ -1276,6 +1281,7 @@ export function createBot(
     delete ctx.session.lastSource;
     delete ctx.session.lastResult;
     delete ctx.session.visualSources;
+    delete ctx.session.pendingImageEditPrompt;
     ctx.session.awaitingInput = false;
     await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup();
@@ -1286,6 +1292,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = true;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.answerCallbackQuery();
@@ -1298,6 +1305,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = true;
+    delete ctx.session.pendingImageEditPrompt;
     delete ctx.session.visualResponseId;
     delete ctx.session.visualSources;
     await ctx.answerCallbackQuery();
@@ -1314,6 +1322,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEditSource = false;
     ctx.session.awaitingImageEdit = true;
+    delete ctx.session.pendingImageEditPrompt;
     await ctx.answerCallbackQuery();
     await ctx.reply("Что изменить на этой фотографии? Напиши одним сообщением.", {
       reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
@@ -1328,6 +1337,7 @@ export function createBot(
     ctx.session.awaitingImageEdit = true;
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     await ctx.answerCallbackQuery();
     await ctx.reply("Что ещё изменить на этой картинке? Напиши одним сообщением.", {
       reply_markup: new InlineKeyboard().text("Отмена", "image:cancel"),
@@ -1338,6 +1348,7 @@ export function createBot(
     ctx.session.awaitingImagePrompt = false;
     ctx.session.awaitingImageEdit = false;
     ctx.session.awaitingImageEditSource = false;
+    delete ctx.session.pendingImageEditPrompt;
     await ctx.answerCallbackQuery("Отменено");
     await editOrReplyMenu(ctx, "Выбери раздел или просто напиши вопрос.", mainMenu());
   });
@@ -1399,6 +1410,20 @@ export function createBot(
       await editImageForUser(
         ctx, config, db, ai, ctx.session.visualSources, directEditPrompt,
         imageLimits, resourceLimiter, track,
+      );
+      return;
+    }
+    if (directEditPrompt) {
+      ctx.session.awaitingImageEditSource = true;
+      ctx.session.pendingImageEditPrompt = directEditPrompt;
+      await ctx.reply(
+        [
+          "Похоже, ты хочешь изменить фотографию.",
+          "",
+          "Пришли исходное фото, и я применю эту правку:",
+          directEditPrompt,
+        ].join("\n"),
+        { reply_markup: new InlineKeyboard().text("Отмена", "image:cancel") },
       );
       return;
     }
@@ -1837,18 +1862,21 @@ async function processVisualItems(
   const captionEditPrompt = caption ? extractImageEditPrompt(caption) : undefined;
   if (ctx.session.awaitingImageEditSource) {
     ctx.session.awaitingImageEditSource = false;
+    const pendingEditPrompt = ctx.session.pendingImageEditPrompt?.trim();
+    delete ctx.session.pendingImageEditPrompt;
     ctx.session.visualSources = items.map((item) => ({
       fileId: item.fileId,
       mimeType: item.mimeType,
     }));
-    if (caption?.trim()) {
+    const editPrompt = caption?.trim() || pendingEditPrompt;
+    if (editPrompt) {
       await editImageForUser(
         ctx,
         config,
         db,
         ai,
         ctx.session.visualSources,
-        caption.trim(),
+        editPrompt,
         {
           plus: config.PLUS_IMAGE_LIMIT,
           pro: config.PRO_IMAGE_LIMIT,
