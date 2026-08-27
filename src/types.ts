@@ -40,6 +40,7 @@ export interface BotSession {
   awaitingInput: boolean;
   lastSource?: string;
   lastResult?: string;
+  generalHistory?: Array<{ role: "user" | "assistant"; text: string }>;
   visualResponseId?: string;
   awaitingImagePrompt?: boolean;
   awaitingImageEdit?: boolean;

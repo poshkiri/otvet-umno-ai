@@ -1534,7 +1534,7 @@ export function createBot(
       }
       let result: string;
       try {
-        result = await ai.answerGeneral(transcript);
+        result = await ai.answerGeneralWithHistory(transcript, ctx.session.generalHistory);
       } catch (error) {
         db.releaseRequest(reservation);
         throw error;
@@ -1542,6 +1542,7 @@ export function createBot(
       ctx.session.flow = "analyze";
       ctx.session.category = "auto";
       finishGeneration(ctx, db, transcript, result, reservation);
+      rememberGeneralTurn(ctx, transcript, result);
       await ctx.reply(`🎙 Распознано: ${transcript.slice(0, 800)}`);
       await replyResult(ctx, result);
       track(ctx.from.id, "generation_voice", "voice", { input_type: "voice" });
@@ -1643,10 +1644,11 @@ async function answerGeneralForUser(
   if (!reservation) return;
   try {
     await ctx.api.sendChatAction(ctx.chat!.id, "typing");
-    const result = cleanTelegramText(await ai.answerGeneral(source));
+    const result = cleanTelegramText(await ai.answerGeneralWithHistory(source, ctx.session.generalHistory));
     ctx.session.flow = "analyze";
     ctx.session.category = "auto";
     finishGeneration(ctx, db, source, result, reservation);
+    rememberGeneralTurn(ctx, source, result);
     await replyResult(ctx, result);
     track(ctx.from!.id, `generation_${inputType}`, "general", { input_type: inputType });
     await notifyLastFreeRequest(ctx, db);
@@ -1739,7 +1741,7 @@ async function generateImageForUser(
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
     releaseReservations(db, aiReservations);
-    await handleError(ctx, error);
+    await handleError(ctx, error, "image_generation");
   } finally {
     await stopProgress?.();
   }
@@ -1798,7 +1800,7 @@ async function editImageForUser(
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
     releaseReservations(db, aiReservations);
-    await handleError(ctx, error);
+    await handleError(ctx, error, "image_edit");
   } finally {
     await stopProgress?.();
   }
@@ -2032,10 +2034,19 @@ async function downloadTelegramFile(
   return data;
 }
 
-async function handleError(ctx: BotContext, error: unknown): Promise<void> {
+async function handleError(
+  ctx: BotContext,
+  error: unknown,
+  area: "general" | "image_generation" | "image_edit" = "general",
+): Promise<void> {
   console.error("Generation error", error);
+  const message = area === "image_edit"
+    ? "Редактор фото сейчас не отвечает. Запрос не списан — попробуй ещё раз чуть позже или напиши в поддержку."
+    : area === "image_generation"
+      ? "Создание картинки сейчас временно недоступно. Запрос не списан — попробуй ещё раз чуть позже или напиши в поддержку."
+      : "Сервис временно недоступен. Запрос не списан — попробуй ещё раз чуть позже или напиши в поддержку.";
   await ctx.reply(
-    "Сервис временно недоступен. Запрос не списан — попробуй ещё раз чуть позже или напиши в поддержку.",
+    message,
     { reply_markup: new InlineKeyboard().url("Связаться с поддержкой", SUPPORT_TELEGRAM_URL) },
   );
 }
@@ -2188,12 +2199,29 @@ function extractImagePrompt(text: string, awaiting: boolean | undefined): string
 export function extractImageEditPrompt(text: string): string | undefined {
   const value = text.trim();
   if (!value) return undefined;
-  const directEditIntent = /^(?:пожалуйста[, ]+)?(?:преврати|превратить|измени|изменить|обработай|обработать|стилизуй|стилизовать|перерисуй|перерисовать|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить|наложи|наложить|вставь|вставить)(?:\s|$)/iu;
+  const directEditIntent = /^(?:пожалуйста[, ]+)?(?:преврати|превратить|измени|изменить|обработай|обработать|отретушируй|отретушировать|стилизуй|стилизовать|перерисуй|перерисовать|улучши|улучшить|исправь|исправить|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить|наложи|наложить|вставь|вставить)(?:\s|$)/iu;
   const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
   const carefulMakeIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:(?:это|эту|данное|мо[её]|исходн(?:ое|ую))\s+)?(?:фото|фотографи(?:ю|и)|картин(?:ку|ка)|изображение|фон|лицо|меня|его|её|ее|нас|предмет|товар|объект)(?:\s|$)/iu;
-  return directEditIntent.test(value) || styleIntent.test(value) || carefulMakeIntent.test(value)
+  const politeEditIntent = /^(?:а\s+)?(?:можно|можешь|можете|надо|нужно|хочу|сделай(?:те)?|попробуй|попробуйте)(?:\s|,|$).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|поставить|разместить|переместить|наложить|вставить|поменять|исправить|улучшить|осветлить|затемнить|размыть|почистить|ретушировать)/iu;
+  const objectChangeIntent = /(?:фон|рук[ауи]?|лицо|глаза|волос[ыа]?|человек|людей|предмет|объект|текст|надпись|логотип|стол|небо|одежд[ау]|цвет).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|сделать|поменять|исправить|улучшить|белым|черным|прозрачным|ярче|темнее)/iu;
+  const absenceIntent = /(?:чтобы|что\s*бы).*?(?:не\s+было|исчез(?:ла|ло|ли)?|без)/iu;
+  return directEditIntent.test(value)
+    || styleIntent.test(value)
+    || carefulMakeIntent.test(value)
+    || politeEditIntent.test(value)
+    || objectChangeIntent.test(value)
+    || absenceIntent.test(value)
     ? value
     : undefined;
+}
+
+function rememberGeneralTurn(ctx: BotContext, userText: string, assistantText: string): void {
+  const next = [
+    ...(ctx.session.generalHistory ?? []),
+    { role: "user" as const, text: userText.trim() },
+    { role: "assistant" as const, text: assistantText.trim() },
+  ].filter((item) => item.text);
+  ctx.session.generalHistory = next.slice(-8);
 }
 
 function formatWait(resetAt: number): string {

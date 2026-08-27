@@ -128,6 +128,33 @@ export class AiService {
     });
   }
 
+  async answerGeneralWithHistory(
+    question: string,
+    history: Array<{ role: "user" | "assistant"; text: string }> = [],
+  ): Promise<string> {
+    const recent = history
+      .slice(-6)
+      .map((item) => `${item.role === "user" ? "Пользователь" : "Пойми AI"}: ${item.text.slice(0, 700)}`)
+      .join("\n\n");
+    const input = recent
+      ? [
+        "Короткий контекст предыдущего диалога. Используй его только если это помогает понять текущий вопрос, не повторяй без необходимости.",
+        recent,
+        "",
+        `Текущий вопрос пользователя: ${question.trim()}`,
+      ].join("\n")
+      : question.trim();
+    return this.limiter.run(async () => {
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: GENERAL_ASSISTANT_PROMPT,
+        input,
+        max_output_tokens: this.maxOutputTokens,
+      });
+      return this.requireText(response.output_text);
+    });
+  }
+
   async analyzePdf(
     document: Uint8Array,
     filename: string,
