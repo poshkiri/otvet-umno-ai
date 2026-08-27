@@ -117,7 +117,9 @@ export function plusPlansMenu(): InlineKeyboard {
 }
 
 export function imageResultMenu(): InlineKeyboard {
-  return new InlineKeyboard().text("🎨 Создать ещё", "image:again");
+  return new InlineKeyboard()
+    .text("🎨 Создать ещё", "image:again").row()
+    .text("🪄 Изменить это фото", "image:edit-current");
 }
 
 export function imageEditResultMenu(): InlineKeyboard {

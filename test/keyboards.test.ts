@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   creditPacksMenu,
   documentsMenu,
+  imageResultMenu,
   imagesMenu,
   mainMenu,
   paywallMenu,
@@ -98,4 +99,11 @@ test("visual result offers one relevant photo action", () => {
     text: "🪄 Изменить это фото",
     callback_data: "image:edit-current",
   }]]);
+});
+
+test("created image result can be regenerated or edited", () => {
+  assert.deepEqual(imageResultMenu().inline_keyboard, [
+    [{ text: "🎨 Создать ещё", callback_data: "image:again" }],
+    [{ text: "🪄 Изменить это фото", callback_data: "image:edit-current" }],
+  ]);
 });
