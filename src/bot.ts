@@ -1375,6 +1375,10 @@ export function createBot(
       });
       return;
     }
+    const replyPhotoSource = extractReplyPhotoSource(ctx);
+    if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length && replyPhotoSource) {
+      ctx.session.visualSources = [replyPhotoSource];
+    }
     if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length) {
       ctx.session.awaitingImageEdit = false;
       ctx.session.awaitingImageEditSource = true;
@@ -1405,10 +1409,12 @@ export function createBot(
       return;
     }
     const directEditPrompt = extractImageEditPrompt(ctx.message.text);
-    if (directEditPrompt && ctx.session.visualSources?.length) {
+    const editSources = replyPhotoSource ? [replyPhotoSource] : ctx.session.visualSources;
+    if (directEditPrompt && editSources?.length) {
+      ctx.session.visualSources = editSources;
       delete ctx.session.visualResponseId;
       await editImageForUser(
-        ctx, config, db, ai, ctx.session.visualSources, directEditPrompt,
+        ctx, config, db, ai, editSources, directEditPrompt,
         imageLimits, resourceLimiter, track,
       );
       return;
@@ -2213,6 +2219,12 @@ export function extractImageEditPrompt(text: string): string | undefined {
     || absenceIntent.test(value)
     ? value
     : undefined;
+}
+
+export function extractReplyPhotoSource(ctx: BotContext): { fileId: string; mimeType: string } | undefined {
+  const photo = ctx.message?.reply_to_message?.photo?.at(-1);
+  if (!photo) return undefined;
+  return { fileId: photo.file_id, mimeType: "image/jpeg" };
 }
 
 function rememberGeneralTurn(ctx: BotContext, userText: string, assistantText: string): void {

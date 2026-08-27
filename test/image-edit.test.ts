@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractImageEditPrompt } from "../src/bot.js";
+import { extractImageEditPrompt, extractReplyPhotoSource } from "../src/bot.js";
 
 test("image edit intent recognizes natural Russian requests", () => {
   assert.equal(extractImageEditPrompt("Сделай меня в стиле аниме"), "Сделай меня в стиле аниме");
@@ -26,4 +26,18 @@ test("image edit intent recognizes natural Russian requests", () => {
   assert.equal(extractImageEditPrompt("какой фон на фото?"), undefined);
   assert.equal(extractImageEditPrompt("сделай план ухода за кожей"), undefined);
   assert.equal(extractImageEditPrompt("сделай краткое описание товара"), undefined);
+});
+
+test("reply photo can be reused as an image edit source", () => {
+  const source = extractReplyPhotoSource({
+    message: {
+      reply_to_message: {
+        photo: [
+          { file_id: "small" },
+          { file_id: "large" },
+        ],
+      },
+    },
+  } as never);
+  assert.deepEqual(source, { fileId: "large", mimeType: "image/jpeg" });
 });
