@@ -1434,7 +1434,21 @@ export function createBot(
       await generateImageForUser(ctx, db, ai, imagePrompt, imageLimits, track);
       return;
     }
-    const directEditPrompt = extractImageEditPrompt(ctx.message.text);
+    const replyVisualQuestion = replyPhotoSource && isImageUnderstandingQuestion(ctx.message.text);
+    if (replyVisualQuestion) {
+      rememberVisualSources(ctx, [replyPhotoSource], "user");
+      delete ctx.session.visualResponseId;
+      await processVisualItems(ctx, [{
+        fileId: replyPhotoSource.fileId,
+        fileSize: undefined,
+        mimeType: replyPhotoSource.mimeType,
+        caption: ctx.message.text,
+      }], config, db, ai, resourceLimiter, track);
+      return;
+    }
+    const directEditPrompt = replyPhotoSource && !isImageUnderstandingQuestion(ctx.message.text)
+      ? ctx.message.text.trim()
+      : extractImageEditPrompt(ctx.message.text);
     const editSources = replyPhotoSource ? [replyPhotoSource] : restoreVisualSources(ctx);
     if (directEditPrompt && editSources?.length) {
       if (replyPhotoSource) {
@@ -2251,11 +2265,11 @@ export function extractImageEditPrompt(text: string): string | undefined {
   const value = text.trim();
   if (!value) return undefined;
   const directEditIntent = /^(?:пожалуйста[, ]+)?(?:преврати|превратить|измени|изменить|обработай|обработать|отретушируй|отретушировать|стилизуй|стилизовать|перерисуй|перерисовать|улучши|улучшить|исправь|исправить|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить|наложи|наложить|вставь|вставить)(?:\s|$)/iu;
-  const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
+  const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|ее|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло|реализм|реалистичн(?:о|ее|ей|ую|ым)|фотореализм|фотореалистичн(?:о|ее|ой|ую))(?:\s|$)/iu;
   const carefulMakeIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:(?:это|эту|данное|мо[её]|исходн(?:ое|ую))\s+)?(?:фото|фотографи(?:ю|и)|картин(?:ку|ка)|изображение|фон|лицо|меня|его|её|ее|нас|предмет|товар|объект)(?:\s|$)/iu;
   const qualityOnlyIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:реалистичн(?:ее|ей|ую|ым)|фотореалистичн(?:ее|ой|ую)|красив(?:ее|ей|ую)|лучше|ярче|темнее|четче|чётче)(?:\s|$)/iu;
   const politeEditIntent = /^(?:а\s+)?(?:можно|можешь|можете|надо|нужно|хочу|сделай(?:те)?|попробуй|попробуйте)(?:\s|,|$).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|поставить|разместить|переместить|наложить|вставить|поменять|исправить|улучшить|осветлить|затемнить|размыть|почистить|ретушировать)/iu;
-  const objectChangeIntent = /(?:фон|рук[ауи]?|лицо|глаза|волос[ыа]?|человек|людей|предмет|объект|текст|надпись|логотип|стол|небо|одежд[ау]|цвет).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|сделать|поменять|исправить|улучшить|белым|черным|прозрачным|ярче|темнее)/iu;
+  const objectChangeIntent = /(?:фон|рук[ауи]?|лицо|глаза|волос[ыа]?|человек|людей|предмет|объект|текст|надпись|логотип|стол|небо|одежд[ау]|цвет).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|сделать|поменять|исправить|улучшить|бел(?:ый|ая|ое|ым|ую)|черн(?:ый|ая|ое|ым|ую)|чёрн(?:ый|ая|ое|ым|ую)|прозрачн(?:ый|ая|ое|ым|ую)|ярче|темнее|реалистичн(?:ее|ей|ую|ым))/iu;
   const absenceIntent = /(?:чтобы|что\s*бы).*?(?:не\s+было|исчез(?:ла|ло|ли)?|без)/iu;
   return directEditIntent.test(value)
     || styleIntent.test(value)
@@ -2268,10 +2282,22 @@ export function extractImageEditPrompt(text: string): string | undefined {
     : undefined;
 }
 
+export function isImageUnderstandingQuestion(text: string): boolean {
+  const value = text.trim().toLowerCase();
+  if (!value) return false;
+  if (extractImageEditPrompt(value)) return false;
+  return /(?:что\s+(?:это|тут|здесь|на\s+фото|на\s+картинке)|как\s+(?:использовать|применять|работает)|для\s+чего|зачем|объясни|расскажи|разбери|проверь|прочитай|переведи|что\s+написано|что\s+означает|это\s+безопасно|можно\s+ли)/iu.test(value);
+}
+
 export function extractReplyPhotoSource(ctx: BotContext): { fileId: string; mimeType: string } | undefined {
-  const photo = ctx.message?.reply_to_message?.photo?.at(-1);
-  if (!photo) return undefined;
-  return { fileId: photo.file_id, mimeType: "image/jpeg" };
+  const reply = ctx.message?.reply_to_message;
+  const photo = reply?.photo?.at(-1);
+  if (photo) return { fileId: photo.file_id, mimeType: "image/jpeg" };
+  const document = reply?.document;
+  if (document?.file_id && document.mime_type?.startsWith("image/")) {
+    return { fileId: document.file_id, mimeType: document.mime_type };
+  }
+  return undefined;
 }
 
 function rememberGeneralTurn(ctx: BotContext, userText: string, assistantText: string): void {
