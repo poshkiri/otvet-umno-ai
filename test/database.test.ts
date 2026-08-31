@@ -51,6 +51,28 @@ test("Mini App conversations are isolated by Telegram user", () => {
   db.close();
 });
 
+test("last image source survives a database restart", () => {
+  const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
+  const path = join(directory, "test.db");
+  const id = 603;
+  const firstProcess = new BotDatabase(path, 5);
+  firstProcess.ensureUser(id);
+  firstProcess.setLastImageSource(id, "photo-1", "image/jpeg", "generated");
+  firstProcess.close();
+
+  const restartedProcess = new BotDatabase(path, 5);
+  assert.deepEqual(restartedProcess.getLastImageSource(id), {
+    fileId: "photo-1",
+    mimeType: "image/jpeg",
+    source: "generated",
+    updatedAt: restartedProcess.getLastImageSource(id)?.updatedAt,
+  });
+  restartedProcess.setLastImageSource(id, "photo-2", "image/png", "edited");
+  assert.equal(restartedProcess.getLastImageSource(id)?.fileId, "photo-2");
+  assert.equal(restartedProcess.getLastImageSource(id)?.source, "edited");
+  restartedProcess.close();
+});
+
 test("pro plan has unlimited access and does not consume credits", () => {
   const directory = mkdtempSync(join(tmpdir(), "otvet-umno-"));
   const db = new BotDatabase(join(directory, "test.db"), 0);

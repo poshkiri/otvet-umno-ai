@@ -50,6 +50,13 @@ export interface BotSession {
   adminAwaitingUserId?: boolean;
 }
 
+export interface StoredImageSource {
+  fileId: string;
+  mimeType: string;
+  source: "user" | "generated" | "edited";
+  updatedAt: string;
+}
+
 export interface UserAccess {
   freeUsed: number;
   freeLimit: number;

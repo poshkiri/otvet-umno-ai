@@ -123,7 +123,9 @@ export function imageResultMenu(): InlineKeyboard {
 }
 
 export function imageEditResultMenu(): InlineKeyboard {
-  return new InlineKeyboard().text("🎨 Изменить ещё", "image:edit-again");
+  return new InlineKeyboard()
+    .text("🪄 Изменить ещё", "image:edit-again").row()
+    .text("🎨 Создать новую", "image:again");
 }
 
 const QUICK_CATEGORIES: Partial<Record<FlowId, CategoryId>> = {

@@ -12,6 +12,8 @@ test("image edit intent recognizes natural Russian requests", () => {
   assert.equal(extractImageEditPrompt("убрать человека справа"), "убрать человека справа");
   assert.equal(extractImageEditPrompt("дорисовать на небе радугу"), "дорисовать на небе радугу");
   assert.equal(extractImageEditPrompt("сделай фото ярче"), "сделай фото ярче");
+  assert.equal(extractImageEditPrompt("сделай реалистичнее"), "сделай реалистичнее");
+  assert.equal(extractImageEditPrompt("изменить на реалистическую"), "изменить на реалистическую");
   assert.equal(extractImageEditPrompt("аниме"), "аниме");
   assert.equal(extractImageEditPrompt("а можно фон сделать белым?"), "а можно фон сделать белым?");
   assert.equal(

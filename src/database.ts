@@ -14,6 +14,7 @@ import type {
   ImageTier,
   PaymentRecord,
   RequestReservation,
+  StoredImageSource,
   SubscriptionAccess,
   SubscriptionRequestAllowance,
   UserAccess,
@@ -189,6 +190,15 @@ export class BotDatabase {
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS user_last_images (
+        telegram_id INTEGER PRIMARY KEY,
+        file_id TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'generated', 'edited')),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS external_payments (
         transaction_id TEXT PRIMARY KEY,
         telegram_id INTEGER NOT NULL,
@@ -240,6 +250,9 @@ export class BotDatabase {
 
       CREATE INDEX IF NOT EXISTS mini_app_conversations_user_date
       ON mini_app_conversations(telegram_id, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS user_last_images_date
+      ON user_last_images(updated_at DESC);
 
       CREATE INDEX IF NOT EXISTS external_payments_user_date
       ON external_payments(telegram_id, created_at DESC);
@@ -1491,6 +1504,42 @@ export class BotDatabase {
       WHERE id = ? AND telegram_id = ?
     `).run(responseId, id, telegramId);
     return result.changes > 0;
+  }
+
+  setLastImageSource(
+    telegramId: number,
+    fileId: string,
+    mimeType: string,
+    source: StoredImageSource["source"] = "user",
+  ): void {
+    this.db.prepare(`
+      INSERT INTO user_last_images (telegram_id, file_id, mime_type, source)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(telegram_id) DO UPDATE SET
+        file_id = excluded.file_id,
+        mime_type = excluded.mime_type,
+        source = excluded.source,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(telegramId, fileId, mimeType, source);
+  }
+
+  getLastImageSource(telegramId: number): StoredImageSource | undefined {
+    const row = this.db.prepare(`
+      SELECT file_id, mime_type, source, updated_at
+      FROM user_last_images WHERE telegram_id = ?
+    `).get(telegramId) as {
+      file_id: string;
+      mime_type: string;
+      source: StoredImageSource["source"];
+      updated_at: string;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      fileId: row.file_id,
+      mimeType: row.mime_type,
+      source: row.source,
+      updatedAt: row.updated_at,
+    };
   }
 
   recentGenerations(telegramId: number, limit = 5): GenerationRecord[] {

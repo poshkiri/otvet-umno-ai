@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   creditPacksMenu,
   documentsMenu,
+  imageEditResultMenu,
   imageResultMenu,
   imagesMenu,
   mainMenu,
@@ -105,5 +106,12 @@ test("created image result can be regenerated or edited", () => {
   assert.deepEqual(imageResultMenu().inline_keyboard, [
     [{ text: "🎨 Создать ещё", callback_data: "image:again" }],
     [{ text: "🪄 Изменить это фото", callback_data: "image:edit-current" }],
+  ]);
+});
+
+test("edited image result can be edited again or start a new image", () => {
+  assert.deepEqual(imageEditResultMenu().inline_keyboard, [
+    [{ text: "🪄 Изменить ещё", callback_data: "image:edit-again" }],
+    [{ text: "🎨 Создать новую", callback_data: "image:again" }],
   ]);
 });

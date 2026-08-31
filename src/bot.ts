@@ -85,6 +85,8 @@ type TrackEvent = (
   properties?: AnalyticsProperties,
 ) => void;
 
+type ImageSource = { fileId: string; mimeType: string };
+
 export interface BotRuntime {
   bot: Bot<BotContext>;
   drainBackgroundTasks: () => Promise<void>;
@@ -176,6 +178,26 @@ export function createBot(
     const guarded = task.catch((error) => console.error("Background album error", error));
     backgroundTasks.add(guarded);
     void guarded.then(() => backgroundTasks.delete(guarded));
+  };
+
+  const restoreVisualSources = (ctx: BotContext): ImageSource[] | undefined => {
+    if (ctx.session.visualSources?.length) return ctx.session.visualSources;
+    if (!ctx.from) return undefined;
+    const stored = db.getLastImageSource(ctx.from.id);
+    if (!stored) return undefined;
+    const sources = [{ fileId: stored.fileId, mimeType: stored.mimeType }];
+    ctx.session.visualSources = sources;
+    return sources;
+  };
+
+  const rememberVisualSources = (
+    ctx: BotContext,
+    sources: ImageSource[],
+    source: "user" | "generated" | "edited",
+  ): void => {
+    ctx.session.visualSources = sources;
+    const first = sources[0];
+    if (ctx.from && first) db.setLastImageSource(ctx.from.id, first.fileId, first.mimeType, source);
   };
 
   bot.use(async (ctx, next) => {
@@ -1315,7 +1337,8 @@ export function createBot(
   });
 
   bot.callbackQuery("image:edit-current", async (ctx) => {
-    if (!ctx.session.visualSources?.length) {
+    const sources = restoreVisualSources(ctx);
+    if (!sources?.length) {
       await ctx.answerCallbackQuery("Сначала отправь фото");
       return;
     }
@@ -1330,7 +1353,8 @@ export function createBot(
   });
 
   bot.callbackQuery("image:edit-again", async (ctx) => {
-    if (!ctx.session.visualSources?.length) {
+    const sources = restoreVisualSources(ctx);
+    if (!sources?.length) {
       await ctx.answerCallbackQuery("Сначала отправь фото");
       return;
     }
@@ -1377,7 +1401,9 @@ export function createBot(
     }
     const replyPhotoSource = extractReplyPhotoSource(ctx);
     if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length && replyPhotoSource) {
-      ctx.session.visualSources = [replyPhotoSource];
+      rememberVisualSources(ctx, [replyPhotoSource], "user");
+    } else if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length) {
+      restoreVisualSources(ctx);
     }
     if (ctx.session.awaitingImageEdit && !ctx.session.visualSources?.length) {
       ctx.session.awaitingImageEdit = false;
@@ -1409,9 +1435,13 @@ export function createBot(
       return;
     }
     const directEditPrompt = extractImageEditPrompt(ctx.message.text);
-    const editSources = replyPhotoSource ? [replyPhotoSource] : ctx.session.visualSources;
+    const editSources = replyPhotoSource ? [replyPhotoSource] : restoreVisualSources(ctx);
     if (directEditPrompt && editSources?.length) {
-      ctx.session.visualSources = editSources;
+      if (replyPhotoSource) {
+        rememberVisualSources(ctx, editSources, "user");
+      } else {
+        ctx.session.visualSources = editSources;
+      }
       delete ctx.session.visualResponseId;
       await editImageForUser(
         ctx, config, db, ai, editSources, directEditPrompt,
@@ -1528,6 +1558,7 @@ export function createBot(
         return transcript;
       });
       const editPrompt = ctx.session.awaitingImageEdit ? transcript.trim() : undefined;
+      if (editPrompt && !ctx.session.visualSources?.length) restoreVisualSources(ctx);
       if (editPrompt && ctx.session.visualSources?.length) {
         ctx.session.awaitingImageEdit = false;
         db.releaseRequest(reservation);
@@ -1743,7 +1774,11 @@ async function generateImageForUser(
       tier: reservation.allowance.tier,
     });
     const photo = sent.photo.at(-1);
-    if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
+    if (photo) {
+      const source = { fileId: photo.file_id, mimeType: "image/jpeg" };
+      ctx.session.visualSources = [source];
+      db.setLastImageSource(ctx.from!.id, source.fileId, source.mimeType, "generated");
+    }
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
     releaseReservations(db, aiReservations);
@@ -1801,7 +1836,11 @@ async function editImageForUser(
       source_count: sources.length,
     });
     const photo = sent.photo.at(-1);
-    if (photo) ctx.session.visualSources = [{ fileId: photo.file_id, mimeType: "image/jpeg" }];
+    if (photo) {
+      const source = { fileId: photo.file_id, mimeType: "image/jpeg" };
+      ctx.session.visualSources = [source];
+      db.setLastImageSource(ctx.from!.id, source.fileId, source.mimeType, "edited");
+    }
     delete ctx.session.visualResponseId;
   } catch (error) {
     db.releaseImageGeneration(reservation.id);
@@ -1876,6 +1915,8 @@ async function processVisualItems(
       fileId: item.fileId,
       mimeType: item.mimeType,
     }));
+    const firstSource = ctx.session.visualSources[0];
+    if (firstSource) db.setLastImageSource(ctx.from!.id, firstSource.fileId, firstSource.mimeType, "user");
     const editPrompt = caption?.trim() || pendingEditPrompt;
     if (editPrompt) {
       await editImageForUser(
@@ -1907,6 +1948,8 @@ async function processVisualItems(
       fileId: item.fileId,
       mimeType: item.mimeType,
     }));
+    const firstSource = ctx.session.visualSources[0];
+    if (firstSource) db.setLastImageSource(ctx.from!.id, firstSource.fileId, firstSource.mimeType, "user");
     await editImageForUser(
       ctx,
       config,
@@ -1957,6 +2000,8 @@ async function processVisualItems(
       fileId: item.fileId,
       mimeType: item.mimeType,
     }));
+    const firstSource = ctx.session.visualSources[0];
+    if (firstSource) db.setLastImageSource(ctx.from!.id, firstSource.fileId, firstSource.mimeType, "user");
     await replyVisualResult(ctx, cleanResult);
     track(ctx.from!.id, "generation_photo", inputType, {
       input_type: inputType,
@@ -2208,12 +2253,14 @@ export function extractImageEditPrompt(text: string): string | undefined {
   const directEditIntent = /^(?:пожалуйста[, ]+)?(?:преврати|превратить|измени|изменить|обработай|обработать|отретушируй|отретушировать|стилизуй|стилизовать|перерисуй|перерисовать|улучши|улучшить|исправь|исправить|замени|заменить|убери|убрать|удали|удалить|добавь|добавить|дорисуй|дорисовать|поставь|поставить|размести|разместить|перемести|переместить|наложи|наложить|вставь|вставить)(?:\s|$)/iu;
   const styleIntent = /^(?:сделай\s+)?(?:меня|его|её|фото|фотографию|картинку|изображение|это)?\s*(?:в\s+стиле\s+)?(?:аниме|мультфильм|мультик|комикс|пиксар|киберпанк|акварель|масло)(?:\s|$)/iu;
   const carefulMakeIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:(?:это|эту|данное|мо[её]|исходн(?:ое|ую))\s+)?(?:фото|фотографи(?:ю|и)|картин(?:ку|ка)|изображение|фон|лицо|меня|его|её|ее|нас|предмет|товар|объект)(?:\s|$)/iu;
+  const qualityOnlyIntent = /^(?:пожалуйста[, ]+)?сдела(?:й|ть)\s+(?:реалистичн(?:ее|ей|ую|ым)|фотореалистичн(?:ее|ой|ую)|красив(?:ее|ей|ую)|лучше|ярче|темнее|четче|чётче)(?:\s|$)/iu;
   const politeEditIntent = /^(?:а\s+)?(?:можно|можешь|можете|надо|нужно|хочу|сделай(?:те)?|попробуй|попробуйте)(?:\s|,|$).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|поставить|разместить|переместить|наложить|вставить|поменять|исправить|улучшить|осветлить|затемнить|размыть|почистить|ретушировать)/iu;
   const objectChangeIntent = /(?:фон|рук[ауи]?|лицо|глаза|волос[ыа]?|человек|людей|предмет|объект|текст|надпись|логотип|стол|небо|одежд[ау]|цвет).*?(?:убрать|удалить|заменить|изменить|добавить|дорисовать|сделать|поменять|исправить|улучшить|белым|черным|прозрачным|ярче|темнее)/iu;
   const absenceIntent = /(?:чтобы|что\s*бы).*?(?:не\s+было|исчез(?:ла|ло|ли)?|без)/iu;
   return directEditIntent.test(value)
     || styleIntent.test(value)
     || carefulMakeIntent.test(value)
+    || qualityOnlyIntent.test(value)
     || politeEditIntent.test(value)
     || objectChangeIntent.test(value)
     || absenceIntent.test(value)
